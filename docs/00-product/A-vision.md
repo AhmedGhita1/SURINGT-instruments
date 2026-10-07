@@ -23,7 +23,7 @@ This is the secondary workflow. An operator opens a live stream or recorded vide
 
 ## D. users and consumers
 
-- The robot controller consumes per-item decisions.
+- The robot operator receives per-item perception and handling results.
 - The robot operator supervises the run and inventory.
 - The tray operator or evaluator captures, finalizes, and reviews a tray session.
 - Researchers and engineers evaluate system quality and limitations.
