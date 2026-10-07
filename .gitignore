@@ -3,7 +3,8 @@ __pycache__/
 *.egg-info/
 data/
 outputs/
-docs/*
+docs-drafts/
+.agents/
 .claude/
 .vscode/
 archive/
