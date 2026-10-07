@@ -11,7 +11,7 @@ SURGINT Instruments is a research prototype that constructs and monitors surgica
 ---
 ## Architecture
 
-![SURGINT Instruments architecture](docs/SURGINT-architecture-v2.svg)
+See the [architecture overview](docs/20-architecture/A-overview.md).
 
 ---
 ## Run with Docker
