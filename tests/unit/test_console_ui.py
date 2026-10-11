@@ -174,3 +174,14 @@ def test_console_wires_session_lifecycle_through_signed_api_urls() -> None:
     assert "keepalive: true" in source
     assert "requestVideoFrameCallback(showFrame)" in source
     assert "presentedFrames - lastInferenceFrame" in source
+
+
+def test_console_records_bounded_capture_to_display_timing_without_queueing() -> None:
+    source = console_source()
+
+    assert "MAX_TIMING_SAMPLES = 1000" in source
+    assert "window.surgintTiming" in source
+    assert 'response.headers.get("Server-Timing")' in source
+    assert "display_age_ms: performance.now() - timing.capture_started_at" in source
+    assert "schedulerTiming.busy_source_frames += 1" in source
+    assert "schedulerTiming.overwritten = 0" in source

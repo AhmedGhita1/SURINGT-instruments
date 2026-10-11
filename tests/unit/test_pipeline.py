@@ -96,6 +96,38 @@ def test_predict():
     assert empty.scores.shape == (0,) and empty.class_ids.shape == (0,)
 
 
+def test_predict_records_phase_timing_without_changing_the_result():
+    transform = Transform(INPUT_SIZE)
+    pipeline = Pipeline(
+        StubDetector(np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)),
+        transform,
+        "detection-only",
+    )
+
+    result = pipeline.predict(blank(), score_threshold=0.3)
+    timing = pipeline.last_timing
+
+    assert len(result.boxes) == 1
+    assert timing is not None
+    assert timing.preprocess_ms >= 0.0
+    assert timing.inference_ms >= 0.0
+    assert timing.postprocess_ms >= 0.0
+    assert timing.tracking_ms >= 0.0
+    assert timing.total_ms >= timing.inference_ms
+
+
+def test_empty_batch_records_zero_timing():
+    pipeline = Pipeline(
+        StubDetector(np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)),
+        Transform(INPUT_SIZE),
+        "detection-only",
+    )
+
+    assert pipeline.predict_batch([], score_threshold=0.3) == []
+    assert pipeline.last_timing is not None
+    assert pipeline.last_timing.total_ms == 0.0
+
+
 def test_tracking():
     """track_ids across frames, and reset between sequences"""
 

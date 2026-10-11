@@ -606,6 +606,7 @@ const CLASS_COLORS = [
 ];
 
 const INFERENCE_FRAME_STRIDE = 5;
+const MAX_TIMING_SAMPLES = 1000;
 
 const ACTION_PRESENTATION = {
   "secure-transport-to-reprocessing": { key: "secure", title: "Secure for reprocessing", icon: "S" },
@@ -682,6 +683,15 @@ let seenClasses = new Map();
 let overlaysEnabled = true;
 let finalizedResult = null;
 let finalizedAt = null;
+let latestResultTiming = null;
+const timingSamples = [];
+const schedulerTiming = { admitted: 0, busy_source_frames: 0, overwritten: 0 };
+
+window.surgintTiming = {
+  samples: timingSamples,
+  scheduler: schedulerTiming,
+  snapshot: function () { return timingSamples.map(function (sample) { return { ...sample }; }); },
+};
 
 const hfSign = new URLSearchParams(window.location.search).get("__sign");
 
@@ -691,6 +701,38 @@ function apiUrl(path) {
     url.searchParams.set("__sign", hfSign);
   }
   return url.toString();
+}
+
+function parseServerTiming(value) {
+  const timings = {};
+  String(value || "").split(",").forEach(function (entry) {
+    const parts = entry.trim().split(";");
+    const duration = parts.find(function (part) { return part.trim().startsWith("dur="); });
+    if (parts[0] && duration) {
+      timings[parts[0]] = Number(duration.trim().slice(4));
+    }
+  });
+  return timings;
+}
+
+function recordDisplayTiming(timing) {
+  if (!timing) {
+    return;
+  }
+  const sample = {
+    mode: mediaKind,
+    capture_ms: timing.capture_ms,
+    request_ms: timing.request_ms,
+    response_body_ms: timing.response_body_ms,
+    display_age_ms: performance.now() - timing.capture_started_at,
+    first_display: timing.display_count === 0,
+    server: timing.server,
+  };
+  timing.display_count += 1;
+  timingSamples.push(sample);
+  if (timingSamples.length > MAX_TIMING_SAMPLES) {
+    timingSamples.shift();
+  }
 }
 
 function setState(nextState, moveFocus) {
@@ -798,6 +840,7 @@ async function deleteSession() {
 }
 
 async function postFrame(video) {
+  const captureStartedAt = performance.now();
   if (capture.width !== video.videoWidth || capture.height !== video.videoHeight) {
     capture.width = video.videoWidth;
     capture.height = video.videoHeight;
@@ -807,8 +850,10 @@ async function postFrame(video) {
   if (!blob) {
     throw new Error("The current video frame could not be captured.");
   }
+  const captureCompletedAt = performance.now();
   const body = new FormData();
   body.append("image", blob, "frame.jpg");
+  const requestStartedAt = performance.now();
   const response = await fetch(apiUrl("/v1/sessions/" + session + "/frames"), {
     method: "POST",
     body: body,
@@ -816,7 +861,20 @@ async function postFrame(video) {
   if (!response.ok) {
     throw new Error("The scanner rejected a video frame (" + response.status + ").");
   }
-  return response.json();
+  const responseHeadersAt = performance.now();
+  const result = await response.json();
+  const responseBodyAt = performance.now();
+  return {
+    result: result,
+    timing: {
+      capture_started_at: captureStartedAt,
+      capture_ms: captureCompletedAt - captureStartedAt,
+      request_ms: responseBodyAt - requestStartedAt,
+      response_body_ms: responseBodyAt - responseHeadersAt,
+      server: parseServerTiming(response.headers.get("Server-Timing")),
+      display_count: 0,
+    },
+  };
 }
 
 function draw(video, detections) {
@@ -895,6 +953,11 @@ function resetSessionData() {
   seenClasses = new Map();
   finalizedResult = null;
   finalizedAt = null;
+  latestResultTiming = null;
+  timingSamples.length = 0;
+  schedulerTiming.admitted = 0;
+  schedulerTiming.busy_source_frames = 0;
+  schedulerTiming.overwritten = 0;
   elements.objectCount.textContent = "0";
   elements.elapsed.textContent = "00:00";
   elements.finishCapture.disabled = true;
@@ -954,10 +1017,13 @@ async function startCapture(video, runner, kind) {
 
 async function runCamera(video) {
   while (running) {
-    const result = await postFrame(video);
+    schedulerTiming.admitted += 1;
+    const completed = await postFrame(video);
+    const result = completed.result;
     frames = result.frame_count;
     updateDetections(result.detections);
     draw(video, result.detections);
+    recordDisplayTiming(completed.timing);
     elements.finishCapture.disabled = false;
   }
 }
@@ -980,9 +1046,11 @@ async function runVideo(video) {
   const infer = async function () {
     inferenceInFlight = true;
     try {
-      const result = await postFrame(video);
+      const completed = await postFrame(video);
+      const result = completed.result;
       frames = result.frame_count;
       updateDetections(result.detections);
+      latestResultTiming = completed.timing;
       elements.finishCapture.disabled = false;
     } catch (error) {
       await failCapture(error);
@@ -999,10 +1067,16 @@ async function runVideo(video) {
     }
     presentedFrames = metadata.presentedFrames;
     draw(video, latestDetections);
+    recordDisplayTiming(latestResultTiming);
     updateElapsed();
-    if (!inferenceInFlight && presentedFrames - lastInferenceFrame >= INFERENCE_FRAME_STRIDE) {
-      lastInferenceFrame = presentedFrames;
-      void infer();
+    if (presentedFrames - lastInferenceFrame >= INFERENCE_FRAME_STRIDE) {
+      if (inferenceInFlight) {
+        schedulerTiming.busy_source_frames += 1;
+      } else {
+        lastInferenceFrame = presentedFrames;
+        schedulerTiming.admitted += 1;
+        void infer();
+      }
     }
     videoFrameCallback = video.requestVideoFrameCallback(showFrame);
   };

@@ -3,11 +3,12 @@ from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
+from time import perf_counter
 from typing import Annotated
 from uuid import UUID, uuid4
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile, status
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 
@@ -31,6 +32,14 @@ from surgint.model.transform import Transform
 logger = logging.getLogger(__name__)
 
 CONSOLE = Path(__file__).parent / "static" / "index.html"
+
+
+def _elapsed_ms(started_at: float) -> float:
+    return (perf_counter() - started_at) * 1000.0
+
+
+def _server_timing_header(measurements: dict[str, float]) -> str:
+    return ", ".join(f"{name};dur={duration:.3f}" for name, duration in measurements.items())
 
 
 def create_app(
@@ -78,6 +87,18 @@ def create_app(
         app.state.transform = None
 
     application = FastAPI(title="Surgint API", version="1", lifespan=lifespan)
+
+    @application.middleware("http")
+    async def expose_server_timing(request: Request, call_next):
+        """Expose per-frame phase durations without retaining image content."""
+        started_at = perf_counter()
+        request.state.server_timing_started_at = started_at
+        response = await call_next(request)
+        measurements = getattr(request.state, "server_timing", None)
+        if measurements is not None:
+            measurements["server"] = _elapsed_ms(started_at)
+            response.headers["Server-Timing"] = _server_timing_header(measurements)
+        return response
 
     @application.get("/", include_in_schema=False)
     def console() -> FileResponse:
@@ -140,8 +161,12 @@ def create_app(
     )
     def process_frame(
         session_id: UUID,
+        request: Request,
         image: Annotated[UploadFile, File()],
     ) -> FrameProcessedResponse:
+        request.state.server_timing = {
+            "receive": _elapsed_ms(request.state.server_timing_started_at),
+        }
         with application.state.sessions_lock:
             session = application.state.sessions.get(session_id)
         if session is None:
@@ -151,14 +176,17 @@ def create_app(
             )
 
         try:
+            phase_started_at = perf_counter()
             with Image.open(image.file) as uploaded:
                 frame = np.asarray(uploaded.convert("RGB"))
+            request.state.server_timing["decode"] = _elapsed_ms(phase_started_at)
         except (OSError, UnidentifiedImageError) as error:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="invalid image",
             ) from error
 
+        lock_started_at = perf_counter()
         with session.lock:
             if session.decision_support.is_finalized:
                 raise HTTPException(
@@ -166,8 +194,21 @@ def create_app(
                     detail="session has already been finalized",
                 )
             with application.state.inference_lock:
+                request.state.server_timing["queue"] = _elapsed_ms(lock_started_at)
                 detections = session.pipeline.predict(frame, score_threshold=0.0)
+            pipeline_timing = session.pipeline.last_timing
+            if pipeline_timing is not None:
+                request.state.server_timing.update(
+                    {
+                        "preprocess": pipeline_timing.preprocess_ms,
+                        "inference": pipeline_timing.inference_ms,
+                        "postprocess": pipeline_timing.postprocess_ms,
+                        "tracking": pipeline_timing.tracking_ms,
+                    }
+                )
+            phase_started_at = perf_counter()
             session.decision_support.update(detections)
+            request.state.server_timing["inventory"] = _elapsed_ms(phase_started_at)
             frame_count = session.decision_support.frame_count
 
         labels = session.pipeline.detector.manifest.labels

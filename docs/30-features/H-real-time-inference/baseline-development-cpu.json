@@ -1,0 +1,564 @@
+{
+  "evidence_scope": "development diagnostic only; not deployment acceptance",
+  "profile": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "13th Gen Intel(R) Core(TM) i7-1360P",
+    "logical_cpus": 16,
+    "python": "3.12.7",
+    "torch": "2.4.1+cpu",
+    "device": "cpu",
+    "cuda_available": false,
+    "cuda_name": null
+  },
+  "input": {
+    "checkpoint": "models\\fair-raven",
+    "checkpoint_manifest": "models\\fair-raven\\manifest.yaml",
+    "dataset": "data\\synthetic\\production_v5\\dataset",
+    "session": "session_000",
+    "source_resolution": [
+      1280,
+      720
+    ],
+    "assumed_source_fps": 20.0,
+    "display_fps": 20.0,
+    "duration_seconds": 5.0,
+    "jpeg_quality": 90,
+    "nms_iou": 0.7
+  },
+  "method": {
+    "serving_path": "in-process FastAPI TestClient, sequential requests",
+    "scheduler": "analytical replay of measured service times; no pending slot",
+    "overlay_age": "capture-to-result measured; recorded-display hold age simulated",
+    "quality": "measured on nominally selected synthetic frames, processed offline in order"
+  },
+  "rates": [
+    {
+      "requested_detector_fps": 5.0,
+      "selected_source_frames": 25,
+      "selection_indices": [
+        0,
+        4,
+        8,
+        12,
+        16,
+        20,
+        24,
+        28,
+        32,
+        36,
+        40,
+        44,
+        48,
+        52,
+        56,
+        60,
+        64,
+        68,
+        72,
+        76,
+        80,
+        84,
+        88,
+        92,
+        96
+      ],
+      "phase_ms": {
+        "capture_encode": {
+          "count": 25,
+          "mean": 6.049168007448316,
+          "p50": 5.369700025767088,
+          "p95": 9.124520048499104,
+          "max": 10.112200048752129
+        },
+        "receive": {
+          "count": 25,
+          "mean": 1.5224799999999998,
+          "p50": 1.423,
+          "p95": 2.1949999999999994,
+          "max": 2.461
+        },
+        "decode": {
+          "count": 25,
+          "mean": 9.009640000000001,
+          "p50": 8.402,
+          "p95": 12.173799999999998,
+          "max": 13.024
+        },
+        "queue": {
+          "count": 25,
+          "mean": 0.00868,
+          "p50": 0.009,
+          "p95": 0.013,
+          "max": 0.018
+        },
+        "preprocess": {
+          "count": 25,
+          "mean": 22.428800000000003,
+          "p50": 23.704,
+          "p95": 27.977599999999995,
+          "max": 30.887
+        },
+        "inference": {
+          "count": 25,
+          "mean": 1113.72368,
+          "p50": 1106.738,
+          "p95": 1168.6738,
+          "max": 1178.211
+        },
+        "postprocess": {
+          "count": 25,
+          "mean": 4.03504,
+          "p50": 3.872,
+          "p95": 5.749999999999998,
+          "max": 6.383
+        },
+        "tracking": {
+          "count": 25,
+          "mean": 9.36124,
+          "p50": 9.171,
+          "p95": 12.868400000000001,
+          "max": 14.14
+        },
+        "inventory": {
+          "count": 25,
+          "mean": 0.08503999999999999,
+          "p50": 0.086,
+          "p95": 0.1334,
+          "max": 0.162
+        },
+        "server": {
+          "count": 25,
+          "mean": 1162.75784,
+          "p50": 1158.32,
+          "p95": 1232.9842,
+          "max": 1238.109
+        },
+        "response_client_boundary": {
+          "count": 25,
+          "mean": 2.3259639908558256,
+          "p50": 2.2555999111607434,
+          "p95": 2.832159977811625,
+          "max": 3.093799944944749
+        },
+        "capture_to_result": {
+          "count": 25,
+          "mean": 1171.1329719983041,
+          "p50": 1169.115599943325,
+          "p95": 1244.11082000006,
+          "max": 1248.1962000019848
+        }
+      },
+      "service_interval_ms": 200.0,
+      "p95_service_to_interval_ratio": 6.2205541000002995,
+      "sustainable_without_busy_skips": false,
+      "sequential_scheduler_simulation": {
+        "candidate_frames": 25,
+        "admitted_frames": 4,
+        "busy_source_frames": 21,
+        "overwritten_frames": 0,
+        "effective_detector_fps": 0.8,
+        "bounded_pending_frames": 0,
+        "overlay_age_ms": {
+          "count": 75,
+          "mean": 1849.3333333333333,
+          "p50": 1849.9999999999998,
+          "p95": 2500.0,
+          "max": 2600.0
+        }
+      },
+      "live_first_display_overlay_age_ms": {
+        "count": 25,
+        "mean": 1171.1329719983041,
+        "p50": 1169.115599943325,
+        "p95": 1244.11082000006,
+        "max": 1248.1962000019848
+      },
+      "tracking_at_nominal_selection_rate": {
+        "MOTA": 0.4216101694915254,
+        "IDF1": 0.5955882352941176,
+        "id_switches": 2,
+        "frames": 25,
+        "gt": 944,
+        "predictions": 416,
+        "fp": 8,
+        "fn": 536
+      },
+      "confirmation": {
+        "selected_sample": 5,
+        "nominal_source_delay_ms": 800.0,
+        "sequential_wall_delay_ms": 6009.906299877912
+      },
+      "inventory_at_nominal_selection_rate": {
+        "inventory_ground_truth": 39,
+        "inventory_predictions": 24,
+        "inventory_error": -15,
+        "inventory_absolute_error": 15,
+        "inventory_mean_absolute_error": 1.1538461538461537,
+        "class_exact_match_rate": 0.3076923076923077,
+        "session_exact_match_rate": 0.0
+      }
+    },
+    {
+      "requested_detector_fps": 6.0,
+      "selected_source_frames": 30,
+      "selection_indices": [
+        0,
+        4,
+        7,
+        10,
+        14,
+        17,
+        20,
+        24,
+        27,
+        30,
+        34,
+        37,
+        40,
+        44,
+        47,
+        50,
+        54,
+        57,
+        60,
+        64,
+        67,
+        70,
+        74,
+        77,
+        80,
+        84,
+        87,
+        90,
+        94,
+        97
+      ],
+      "phase_ms": {
+        "capture_encode": {
+          "count": 30,
+          "mean": 6.6901866618233425,
+          "p50": 5.832850001752377,
+          "p95": 12.902214925270524,
+          "max": 16.118900035507977
+        },
+        "receive": {
+          "count": 30,
+          "mean": 1.6457000000000002,
+          "p50": 1.4289999999999998,
+          "p95": 2.7550999999999997,
+          "max": 3.677
+        },
+        "decode": {
+          "count": 30,
+          "mean": 9.842099999999999,
+          "p50": 9.2975,
+          "p95": 13.253849999999995,
+          "max": 21.208
+        },
+        "queue": {
+          "count": 30,
+          "mean": 0.009166666666666667,
+          "p50": 0.0085,
+          "p95": 0.014649999999999991,
+          "max": 0.023
+        },
+        "preprocess": {
+          "count": 30,
+          "mean": 23.54856666666667,
+          "p50": 23.4015,
+          "p95": 34.25509999999999,
+          "max": 40.569
+        },
+        "inference": {
+          "count": 30,
+          "mean": 1137.5798999999997,
+          "p50": 1112.3155000000002,
+          "p95": 1319.6103999999998,
+          "max": 1482.814
+        },
+        "postprocess": {
+          "count": 30,
+          "mean": 3.9604333333333335,
+          "p50": 3.958,
+          "p95": 5.44135,
+          "max": 5.575
+        },
+        "tracking": {
+          "count": 30,
+          "mean": 9.613133333333334,
+          "p50": 8.635000000000002,
+          "p95": 17.348849999999995,
+          "max": 19.776
+        },
+        "inventory": {
+          "count": 30,
+          "mean": 0.08236666666666667,
+          "p50": 0.0715,
+          "p95": 0.13755,
+          "max": 0.23
+        },
+        "server": {
+          "count": 30,
+          "mean": 1188.5781666666664,
+          "p50": 1161.958,
+          "p95": 1384.6207499999998,
+          "max": 1570.2
+        },
+        "response_client_boundary": {
+          "count": 30,
+          "mean": 2.3589699941289988,
+          "p50": 2.1145499807707893,
+          "p95": 4.47804003405382,
+          "max": 5.652899961501362
+        },
+        "capture_to_result": {
+          "count": 30,
+          "mean": 1197.627323322619,
+          "p50": 1170.348949963227,
+          "p95": 1398.7376499047966,
+          "max": 1591.1411000415683
+        }
+      },
+      "service_interval_ms": 166.66666666666666,
+      "p95_service_to_interval_ratio": 8.39242589942878,
+      "sustainable_without_busy_skips": false,
+      "sequential_scheduler_simulation": {
+        "candidate_frames": 30,
+        "admitted_frames": 4,
+        "busy_source_frames": 26,
+        "overwritten_frames": 0,
+        "effective_detector_fps": 0.8,
+        "bounded_pending_frames": 0,
+        "overlay_age_ms": {
+          "count": 76,
+          "mean": 1814.0350877192989,
+          "p50": 1808.3333333333335,
+          "p95": 2425.0,
+          "max": 2600.0
+        }
+      },
+      "live_first_display_overlay_age_ms": {
+        "count": 30,
+        "mean": 1197.627323322619,
+        "p50": 1170.348949963227,
+        "p95": 1398.7376499047966,
+        "max": 1591.1411000415683
+      },
+      "tracking_at_nominal_selection_rate": {
+        "MOTA": 0.4536628420123566,
+        "IDF1": 0.6268656716417911,
+        "id_switches": 0,
+        "frames": 30,
+        "gt": 1133,
+        "predictions": 542,
+        "fp": 14,
+        "fn": 605
+      },
+      "confirmation": {
+        "selected_sample": 5,
+        "nominal_source_delay_ms": 700.0,
+        "sequential_wall_delay_ms": 5835.760400048457
+      },
+      "inventory_at_nominal_selection_rate": {
+        "inventory_ground_truth": 39,
+        "inventory_predictions": 25,
+        "inventory_error": -14,
+        "inventory_absolute_error": 14,
+        "inventory_mean_absolute_error": 1.0769230769230769,
+        "class_exact_match_rate": 0.3076923076923077,
+        "session_exact_match_rate": 0.0
+      }
+    },
+    {
+      "requested_detector_fps": 10.0,
+      "selected_source_frames": 50,
+      "selection_indices": [
+        0,
+        2,
+        4,
+        6,
+        8,
+        10,
+        12,
+        14,
+        16,
+        18,
+        20,
+        22,
+        24,
+        26,
+        28,
+        30,
+        32,
+        34,
+        36,
+        38,
+        40,
+        42,
+        44,
+        46,
+        48,
+        50,
+        52,
+        54,
+        56,
+        58,
+        60,
+        62,
+        64,
+        66,
+        68,
+        70,
+        72,
+        74,
+        76,
+        78,
+        80,
+        82,
+        84,
+        86,
+        88,
+        90,
+        92,
+        94,
+        96,
+        98
+      ],
+      "phase_ms": {
+        "capture_encode": {
+          "count": 50,
+          "mean": 6.186192000750452,
+          "p50": 5.692449980415404,
+          "p95": 8.540114969946444,
+          "max": 14.781500096432865
+        },
+        "receive": {
+          "count": 50,
+          "mean": 1.45404,
+          "p50": 1.2570000000000001,
+          "p95": 2.2892499999999996,
+          "max": 2.77
+        },
+        "decode": {
+          "count": 50,
+          "mean": 9.444099999999999,
+          "p50": 8.504999999999999,
+          "p95": 14.83645,
+          "max": 17.525
+        },
+        "queue": {
+          "count": 50,
+          "mean": 0.008879999999999999,
+          "p50": 0.007,
+          "p95": 0.01655,
+          "max": 0.019
+        },
+        "preprocess": {
+          "count": 50,
+          "mean": 23.42,
+          "p50": 22.686999999999998,
+          "p95": 34.174649999999986,
+          "max": 39.656
+        },
+        "inference": {
+          "count": 50,
+          "mean": 1122.6128600000002,
+          "p50": 1116.9335,
+          "p95": 1209.6653999999999,
+          "max": 1345.19
+        },
+        "postprocess": {
+          "count": 50,
+          "mean": 4.01004,
+          "p50": 3.6180000000000003,
+          "p95": 6.559,
+          "max": 8.238
+        },
+        "tracking": {
+          "count": 50,
+          "mean": 10.14132,
+          "p50": 9.4305,
+          "p95": 17.066449999999993,
+          "max": 19.964
+        },
+        "inventory": {
+          "count": 50,
+          "mean": 0.0922,
+          "p50": 0.08399999999999999,
+          "p95": 0.16194999999999998,
+          "max": 0.21
+        },
+        "server": {
+          "count": 50,
+          "mean": 1173.56848,
+          "p50": 1168.749,
+          "p95": 1267.8695,
+          "max": 1407.74
+        },
+        "response_client_boundary": {
+          "count": 50,
+          "mean": 2.2145160086382885,
+          "p50": 2.043400043878705,
+          "p95": 3.2799600251656327,
+          "max": 3.545700043648594
+        },
+        "capture_to_result": {
+          "count": 50,
+          "mean": 1181.9691880093887,
+          "p50": 1175.876950030215,
+          "p95": 1279.1143950773403,
+          "max": 1415.5557999620214
+        }
+      },
+      "service_interval_ms": 100.0,
+      "p95_service_to_interval_ratio": 12.791143950773403,
+      "sustainable_without_busy_skips": false,
+      "sequential_scheduler_simulation": {
+        "candidate_frames": 50,
+        "admitted_frames": 5,
+        "busy_source_frames": 45,
+        "overwritten_frames": 0,
+        "effective_detector_fps": 1.0,
+        "bounded_pending_frames": 0,
+        "overlay_age_ms": {
+          "count": 77,
+          "mean": 1785.064935064935,
+          "p50": 1799.9999999999998,
+          "p95": 2350.0,
+          "max": 2450.0
+        }
+      },
+      "live_first_display_overlay_age_ms": {
+        "count": 50,
+        "mean": 1181.9691880093887,
+        "p50": 1175.876950030215,
+        "p95": 1279.1143950773403,
+        "max": 1415.5557999620214
+      },
+      "tracking_at_nominal_selection_rate": {
+        "MOTA": 0.48120698782424565,
+        "IDF1": 0.649025069637883,
+        "id_switches": 4,
+        "frames": 50,
+        "gt": 1889,
+        "predictions": 983,
+        "fp": 35,
+        "fn": 941
+      },
+      "confirmation": {
+        "selected_sample": 5,
+        "nominal_source_delay_ms": 400.0,
+        "sequential_wall_delay_ms": 5776.324100210331
+      },
+      "inventory_at_nominal_selection_rate": {
+        "inventory_ground_truth": 39,
+        "inventory_predictions": 27,
+        "inventory_error": -12,
+        "inventory_absolute_error": 12,
+        "inventory_mean_absolute_error": 0.9230769230769231,
+        "class_exact_match_rate": 0.38461538461538464,
+        "session_exact_match_rate": 0.0
+      }
+    }
+  ]
+}

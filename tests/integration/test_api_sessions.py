@@ -157,6 +157,35 @@ def test_frame_updates_tracking_session() -> None:
         assert session.decision_support.frame_count == 1
 
 
+def test_frame_response_exposes_server_phase_timing() -> None:
+    application = create_app(
+        ServingSettings(checkpoint=Path("model")),
+        lambda _: FakeDetector(),
+    )
+
+    with TestClient(application) as client:
+        session_id = UUID(client.post("/v1/sessions").json()["session_id"])
+        response = client.post(
+            f"/v1/sessions/{session_id}/frames",
+            files={"image": ("frame.png", image_bytes(), "image/png")},
+        )
+
+    assert response.status_code == 200
+    server_timing = response.headers["server-timing"]
+    for phase in (
+        "receive",
+        "decode",
+        "queue",
+        "preprocess",
+        "inference",
+        "postprocess",
+        "tracking",
+        "inventory",
+        "server",
+    ):
+        assert f"{phase};dur=" in server_timing
+
+
 def test_frame_rejects_invalid_image_without_updating_session() -> None:
     application = create_app(
         ServingSettings(checkpoint=Path("model")),
