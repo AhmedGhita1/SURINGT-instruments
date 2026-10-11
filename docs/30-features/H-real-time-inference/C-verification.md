@@ -10,7 +10,7 @@ This checkpoint instruments the current sequential path without changing its sch
 tracking, inventory, or finalization behavior. The recorded run is a development diagnostic,
 not deployment acceptance and not evidence that the product supports a live detector rate.
 
-The raw report is `baseline-development-cpu.json`. It was produced on:
+The development CPU raw report is `baseline-development-cpu.json`. It was produced on:
 
 - Windows 11, 13th Gen Intel Core i7-1360P, 16 logical CPUs;
 - Python 3.12.7 and CPU-only PyTorch 2.4.1;
@@ -34,12 +34,15 @@ rerun and approved on the actual robot-edge or tray-service deployment hardware.
 - The development measurement command drives the real checkpoint through the frame API, then
   replays measured service times against the existing no-pending-work behavior. It evaluates
   tracking and inventory on the nominal 5, 6, and 10 FPS selections processed offline in order.
+- The same command now has a remote mode that paces source candidates against the wall clock,
+  calls the public frame API, records the server phases and client boundary, and evaluates only
+  frames that were actually admitted. It does not change the server or browser scheduler.
 
 ## C. latency breakdown
 
 Values are milliseconds and shown as p50 / p95. `response boundary` is TestClient time outside
 the measured server total, so it is not a network measurement. `capture to result` begins before
-JPEG encoding and ends after response receipt and JSON parsing.
+JPEG encoding and ends after the response body is received; JSON parsing follows that interval.
 
 | phase | 5 FPS | 6 FPS | 10 FPS |
 |---|---:|---:|---:|
@@ -170,17 +173,163 @@ python -m pytest -q -p no:cacheprovider --basetemp .verification_tmp/model tests
 Result: Ruff passed, 127 unit tests passed, 110 integration tests passed, and 10 model tests
 passed. The workspace verification temp directory was removed after the checks.
 
-## I. limitations and gate decision
+Remote measurement support and report checks after the T4 run:
 
-- no target GPU, robot-edge device, cloud GPU, real browser, camera, network, concurrent stream,
-  or deployment container was exercised;
+```text
+python -m ruff check pipelines/measure_realtime.py tests/unit/test_realtime_measurement.py
+python -m pytest -q -p no:cacheprovider tests/unit/test_realtime_measurement.py
+python -m pipelines.measure_realtime --help
+python -c "import json, pathlib; p=pathlib.Path(r'docs/30-features/H-real-time-inference/baseline-space-t4-small.json'); d=json.loads(p.read_text(encoding='utf-8')); assert [r['requested_detector_fps'] for r in d['rates']] == [5.0, 6.0, 10.0]; assert d['space_lifecycle']['paused_after_measurement'] is True; assert d['space_lifecycle']['cleanup_errors'] == []; print('GPU report schema and lifecycle assertions passed')"
+```
+
+Result: focused Ruff passed, all 4 measurement tests passed, the CLI help completed, and the raw
+report schema and lifecycle assertions passed.
+
+Change-verification equivalents were rerun after the remote support was added:
+
+```text
+python -m ruff check services surgint tests pipelines/measure_realtime.py
+New-Item -ItemType Directory -Path '.verification_tmp' -Force
+python -m pytest -q -p no:cacheprovider --basetemp .verification_tmp/gpu-unit-rerun tests/unit
+python -m pytest -q -p no:cacheprovider --basetemp .verification_tmp/gpu-integration-rerun tests/integration
+python -m pytest -q -p no:cacheprovider --basetemp .verification_tmp/gpu-model tests/model
+```
+
+Result: Ruff passed, 128 unit tests passed, 110 integration tests passed, and 10 model tests
+passed. An initial parallel unit and integration attempt could not create nested base-temp paths
+because the common parent did not yet exist. After explicitly creating that parent, both suites
+passed unchanged. The resolved workspace temp directory was removed after verification.
+
+## I. bounded T4 remote evidence
+
+The second raw report is `baseline-space-t4-small.json`. This is an actual remote measurement of
+the instrumented API, but it is still a development diagnostic and not deployment acceptance.
+The temporary Space deployment used:
+
+- public Docker Space `AhmedGhita/surgint-instruments`, revision
+  `d5af3110d58c258170891792c01b75adbab3f6ba`, on requested and running hardware `t4-small`;
+- source commit `936ed3c4cb956c78d04cbe4b1e52652822c431d9` from branch `feat/rt-infer`, installed from a
+  pinned source archive with SHA-256
+  `cc4ae1cd020089d86896062fb48fd320d452c0891dee728ea3f898a08bcb13ca`;
+- base image `ghcr.io/ahmedghita1/surgint-instruments:1.0.1` pinned to manifest digest
+  `sha256:cec843003b132fcd4ea791086e14e2032b2b1da8cb9c63ced37baba11ab17b1d`;
+- model source `PekingU/rtdetr_r18vd_coco_o365`, training run
+  `fair-raven_20260917_1701`, dataset `production_v5`, input 1024 by 576, and weights SHA-256
+  `sha256:ef6c387cfac708da21bd51261f0d35d94f37237eb5e8aa3731f2c6b010a27dd0`.
+
+The model repository revision was not present in the image manifest and is recorded as unknown,
+not inferred. The source profile was the first five seconds of annotated synthetic `session_000`,
+assuming 20 FPS source and display clocks, using 1280 by 720 JPEG frames at quality 90, one stream,
+two warmup requests, and sequential public HTTPS request-response calls. Candidate source times were
+paced on the client wall clock. A candidate whose slot passed while a request was in flight was
+counted busy and not admitted. Tracking and inventory were evaluated only on admitted frames.
+
+## J. T4 latency breakdown
+
+Values are milliseconds and shown as p50 / p95. `response boundary` is request time outside the
+route's `Server-Timing` total. It includes the public HTTPS path, Space proxying, framework work
+outside the timed route, response serialization, and body transfer, so it is not a pure network
+measurement. `capture to result` includes local JPEG encoding through response body receipt.
+
+| phase | 5 FPS | 6 FPS | 10 FPS |
+|---|---:|---:|---:|
+| client JPEG encode | 6.5 / 9.7 | 6.6 / 8.4 | 6.5 / 7.5 |
+| receive and multipart parse | 22.0 / 25.5 | 22.3 / 31.3 | 22.3 / 23.9 |
+| image decode | 5.9 / 7.5 | 6.1 / 6.2 | 6.1 / 7.6 |
+| session and inference lock wait | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 |
+| preprocess | 16.1 / 19.7 | 15.6 / 18.2 | 15.5 / 25.4 |
+| detector inference | 26.4 / 28.5 | 26.7 / 29.1 | 26.9 / 38.3 |
+| postprocess and NMS | 2.5 / 2.9 | 2.5 / 3.2 | 2.4 / 3.4 |
+| tracking | 2.9 / 4.1 | 3.5 / 3.9 | 3.5 / 5.6 |
+| inventory update | 0.1 / 0.1 | 0.1 / 0.1 | 0.1 / 0.1 |
+| total server | 78.2 / 83.1 | 78.7 / 87.5 | 77.4 / 103.5 |
+| response boundary | 169.4 / 194.4 | 156.2 / 180.2 | 152.0 / 160.1 |
+| capture to result | 254.2 / 283.6 | 244.3 / 279.1 | 236.6 / 263.2 |
+
+GPU inference was not the end-to-end bottleneck in this topology. Median inference was about
+26 to 27 ms and median total server time was about 77 to 79 ms. The public client boundary was
+larger than server time. This does not authorize transport or model changes.
+
+## K. T4 detector-rate and overlay behavior
+
+The admissions and latency values below were measured during actual wall-clock-paced requests.
+Held-overlay age was replayed afterward on the assumed 20 FPS display clock from the actual capture
+and result timestamps. It is not a browser rendering measurement.
+
+| requested rate | p95 service / interval | admitted / candidates | effective rate | completion rate | busy | overwritten | first-display proxy p50 / p95 | held age p50 / p95 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 5 FPS | 1.42 | 13 / 25 | 2.6 FPS | 2.47 FPS | 12 | 0 | 254 / 284 ms | 448 / 646 ms |
+| 6 FPS | 1.67 | 14 / 30 | 2.8 FPS | 2.72 FPS | 16 | 0 | 244 / 279 ms | 434 / 614 ms |
+| 10 FPS | 2.63 | 16 / 50 | 3.2 FPS | 3.06 FPS | 34 | 0 | 237 / 263 ms | 388 / 551 ms |
+
+None of 5, 6, or 10 detector FPS was sustained by the current synchronous public path. The
+implementation overwrote zero frames because it has no pending-frame slot; 12, 16, and 34 source
+candidates instead passed while work was busy. The lower held age at a higher requested rate is a
+sampling effect from admitting a more recent eligible candidate, not evidence of sustained 10 FPS.
+
+## L. T4 tracking, confirmation, and inventory effects
+
+These values describe the irregular frames actually admitted during each five-second run.
+
+| requested rate | MOTA | IDF1 | identity switches | first confirmation source / wall delay | predicted / 39 inventory items | absolute inventory error |
+|---:|---:|---:|---:|---:|---:|---:|
+| 5 FPS | 0.322 | 0.492 | 0 | 1,600 / 1,952 ms | 23 | 16 |
+| 6 FPS | 0.359 | 0.536 | 0 | 1,350 / 1,635 ms | 24 | 15 |
+| 10 FPS | 0.337 | 0.510 | 1 | 1,300 / 1,595 ms | 21 | 18 |
+
+Every run first confirmed on admitted sample five, preserving the existing five-hit rule. Busy
+slots extended source-time and wall-time confirmation, and the short runs undercounted inventory
+by 15 to 18 items. The 10 FPS request did not improve tracking or inventory because it did not
+produce a sustained 10 FPS observation stream. Existing tracking is fixed-step, so these values
+support the need for elapsed-time semantics but are not quality acceptance thresholds. Display-only
+predictions do not exist at this gate and therefore cannot update tracking evidence, inventory, or
+handling decisions.
+
+## M. numerical recommendation and smallest sufficient proposal
+
+Keep the guardrails in section F as provisional engineering targets. In particular, begin the next
+target-hardware evaluation at 5 FPS, require p95 capture-to-result at or below 160 ms, suppress a
+5 FPS overlay after 400 ms, retain at most one newest pending live frame, and require confirmation
+within 1,000 ms. This Space profile failed the 5 FPS service, held-overlay, and confirmation targets.
+
+Do not declare a supported detector rate from this result. Supported-profile numerical limits must
+be rerun on the actual target deployment hardware and network topology. The smallest sufficient
+implementation remains section G and `B-plan.md`: temporal identity, elapsed-time tracking,
+non-mutating display predictions, a bounded latest-frame live scheduler, stale-result suppression,
+deterministic recorded input, and unchanged tray finalization and decision behavior.
+
+## N. Space restoration and pause evidence
+
+- initial Space revision `e7201f56971fb21f57899eca8713a9c8ac5529f4` was `PAUSED`, with requested
+  hardware `t4-small` and sleep time 900 seconds;
+- measurement ran from `2026-10-11T13:06:54.126125+00:00` through
+  `2026-10-11T13:07:14.614018+00:00`;
+- cleanup restored revision `13f6f6e6c0b5d1433f867bca140d393e679a14b2` and returned the Space to
+  `PAUSED` with no cleanup errors;
+- the restored 50-byte Dockerfile has SHA-256
+  `43be37c03e4b9168b24cfa8a0aa621baae3a5e7585e7a56e44cb1dc6c91a404c` and exactly contains
+  `FROM ghcr.io/ahmedghita1/surgint-instruments:1.0.1`;
+- the preserved 226-byte README has SHA-256
+  `30a0a12092088fa02693e24769094d4945f94874750e31f41dbcc90d4c697310`.
+
+An independent read after the cleanup confirmed revision
+`13f6f6e6c0b5d1433f867bca140d393e679a14b2`, stage `PAUSED`, no allocated current hardware,
+requested hardware `t4-small`, sleep time 900, and the same Dockerfile and README hashes.
+
+## O. combined limitations and gate decision
+
+- neither the temporary CPU laptop nor the public T4 Space is the confirmed deployment target;
+- the remote evidence is one bounded run per rate, one synthetic sequence, one stream, and only
+  five seconds per rate, so it does not estimate long-run tails, contention, or thermal behavior;
 - source FPS is an explicit playback assumption because the annotated image sequence carries no
   timing metadata;
-- the in-process client excludes real network latency and browser JPEG implementation cost;
-- held-overlay age is simulated from measured service times, and prediction error is not available
-  because display prediction is not implemented;
-- quality evidence covers one synthetic sequence and only its first five seconds;
+- the remote client exercised a real public network path, but did not isolate network RTT, proxy
+  overhead, browser JPEG behavior, rendering, a physical camera, or concurrent streams;
+- held-overlay age is replayed from actual timestamps, not observed in a browser, and prediction
+  error is unavailable because display prediction is not implemented;
 - fixed-step tracking means rate comparisons also change the tracker's implicit time unit;
+- the base image and weights are content-addressed, but the upstream model repository revision was
+  unavailable from the image manifest;
 - no supported detector rate or acceptance threshold is approved at this gate.
 
 Stop here for architect and user approval. Do not optimize or continue to temporal contracts,

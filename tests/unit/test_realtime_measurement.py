@@ -2,6 +2,7 @@ import pytest
 
 from pipelines.measure_realtime import (
     parse_server_timing,
+    replay_overlay_age,
     selection_indices,
     simulate_sequential_scheduler,
 )
@@ -40,3 +41,15 @@ def test_sequential_scheduler_skips_busy_candidates_without_overwriting():
     assert result["bounded_pending_frames"] == 0
     assert result["effective_detector_fps"] == pytest.approx(4.0)
     assert result["overlay_age_ms"]["p95"] >= 300.0
+
+
+def test_overlay_replay_uses_only_results_completed_by_each_display_frame():
+    result = replay_overlay_age(
+        admissions=[(0.0, 0.1), (0.2, 0.3)],
+        display_fps=10.0,
+        duration_seconds=0.5,
+    )
+
+    assert result["count"] == 4
+    assert result["p50"] == pytest.approx(150.0)
+    assert result["max"] == pytest.approx(200.0)
