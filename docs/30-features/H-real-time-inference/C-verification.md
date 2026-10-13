@@ -471,3 +471,148 @@ Result: focused Ruff passed, 70 targeted tests passed, repository Ruff passed, 1
 passed, and 115 integration tests passed. The previously completed 10-test model suite was not
 repeated because this correction changes only API compatibility time synthesis and its integration
 test, not detector or model behavior.
+
+## U. bounded live scheduler contract
+
+The packaged console's live-camera path now uses a configurable selection clock, initially 5 FPS,
+on the browser's monotonic `performance` time domain. The display callback freezes that source
+timestamp with the source dimensions and sequence before asynchronous JPEG encoding. Every
+captured scheduler item is an immutable blob plus complete schema 1.1 client metadata. Overwrite
+drops can therefore create sequence gaps, while every transmitted sequence and timestamp remains
+strictly increasing.
+
+The live scheduler is an explicit state machine with exactly one detector request in flight and
+zero or one pending captured frame. An idle scheduler launches immediately. While busy, the first
+new item occupies the pending slot and each newer item atomically replaces that item. Completion
+launches the then-current pending item only when the same generation, session, and source remain
+active. It never appends to a collection or retains more than one pending item.
+
+Finishing camera capture stops selection, discards the pending item, and waits for the one current
+detector request to settle and be correlated before entering review. Discard, failure, reset, and
+restart abort client requests and increment a generation token so late callbacks cannot update a
+new or stopped session. A JPEG capture that finishes after its generation ends is ignored. The
+recorded-video scheduler and `/video` processing path are unchanged in this checkpoint.
+
+The deterministic scheduler simulation covers both overload and sustainable operation. At a
+10 FPS selection rate with constant 300 ms service over one second, it produces 10 candidates,
+four admissions captured at 0.0, 0.2, 0.5, and 0.8 seconds, nine busy observations, five pending
+overwrites, one shutdown drop, and a maximum pending depth of one. With 50 ms service it admits all
+10 candidates with no busy observation, overwrite, shutdown drop, or pending occupancy. This is a
+state-machine test, not a new target-hardware performance measurement.
+
+## V. live display and suppression contract
+
+Live source drawing advances on `requestVideoFrameCallback`, with `requestAnimationFrame` as the
+camera-only fallback, independently of detector request completion. Detector responses update the
+sidebar and seen-class state only after schema, active generation, session, source, metadata
+origin, sequence, capture timestamp, dimensions, and response order match the captured item.
+Mismatched or out-of-order responses are suppressed.
+
+After the first accepted detector result, display-prediction GETs are separately bounded to one
+request in flight. A response must match the active generation, session, source, requested display
+timestamp, and response order. Prediction records must be server-valid, finite, use a recognized
+track state, and have positive box geometry. The browser recomputes evidence age on receipt using
+the latest value in the same live source clock and repeats that check on every render. It does not
+trust the age calculated when the request started. Predictions older than the provisional
+0.4-second limit or otherwise invalid are not drawn.
+
+Display predictions feed only `draw`. They never call the detector-backed `updateDetections`
+function and therefore cannot add sidebar observations or seen classes. The server endpoint remains
+read-only, so checkpoint-2 evidence continues to prove no display-prediction mutation of tracker
+hits, votes, history, inventory, session frame count, finalization, or handling decisions.
+
+The diagnostic state has these exact meanings:
+
+| counter | meaning |
+|---|---|
+| `selection_opportunities` | due live selection ticks observed by the display loop |
+| `selected` | immutable JPEG and temporal metadata captures completed |
+| `capture_busy_drops` | due ticks skipped because the single JPEG capture was still active |
+| `capture_errors` | attempted captures whose JPEG snapshot failed |
+| `admitted` | captured frames that started a detector request |
+| `busy_source_frames` | captured frames offered while a detector request was active |
+| `overwritten` | older pending frames replaced by a newer captured frame |
+| `shutdown_drops` | pending or just-encoded captured frames discarded when capture stopped |
+| `dropped` | sum of capture-busy, overwritten, and shutdown drops |
+| `completed` | detector requests returning a parsed success response in the active generation |
+| `accepted_results` | completed detector responses passing every correlation check |
+| `suppressed_results` | completed current-generation detector responses failing correlation |
+| `request_errors`, `aborted_requests` | failed detector requests and explicit client aborts |
+| `in_flight`, `pending`, `max_pending` | current detector capacity gauges and observed pending high-water mark |
+| `prediction_requests`, `prediction_completed` | started and parsed-success display GETs |
+| `prediction_accepted`, `prediction_suppressed` | display responses passing or failing correlation |
+| `prediction_errors`, `prediction_aborted` | failed display GETs and explicit client aborts |
+| `invalid_predictions` | individual prediction records rejected on response receipt |
+| `stale_overlay_frames` | display ticks that excluded one or more stored records after revalidation |
+| `rendered_overlay_frames` | display ticks with at least one valid overlay while overlays were enabled |
+
+Counters, current capacity, in-flight sequence, and pending sequence are available through
+`window.surgintTiming` snapshots for deterministic inspection and later supervised measurement.
+
+## W. live scheduler checkpoint verification
+
+Focused verification:
+
+```text
+python -m ruff check pipelines/measure_realtime.py tests/unit/test_realtime_measurement.py tests/unit/test_console_ui.py
+python -m pytest -q -p no:cacheprovider tests/unit/test_realtime_measurement.py tests/unit/test_console_ui.py tests/integration/test_api_sessions.py tests/integration/test_session.py tests/integration/test_decision_support.py
+```
+
+Result: focused Ruff passed and all 62 focused tests passed.
+
+The repository verification script remains blocked by the host PowerShell execution policy
+recorded in section H. Its affected-scope equivalent commands ran with a workspace base-temp
+directory:
+
+```text
+New-Item -ItemType Directory -Path '.verification_tmp' -Force
+python -m ruff check services surgint tests pipelines/measure_realtime.py
+python -m pytest -q -p no:cacheprovider --basetemp .verification_tmp/live-unit tests/unit
+python -m pytest -q -p no:cacheprovider --basetemp .verification_tmp/live-integration tests/integration
+```
+
+Result: repository Ruff passed, 156 unit tests passed in 18.92 seconds, and 115 integration tests
+passed in 33.89 seconds. The 10-test model suite completed for the preceding temporal checkpoint
+and was not rerun here because this checkpoint changes only packaged browser JavaScript,
+measurement simulation, tests, and evidence; detector, model, and model-runtime behavior are
+unchanged.
+
+Browser or Node execution is not installed in the development environment. The executable
+scheduler evidence is therefore the deterministic Python state-machine simulation, while packaged
+console tests statically assert the actual JavaScript capacity transitions, counter updates,
+identity correlation, prediction bounds, age and geometry checks, display-only isolation,
+generation invalidation, finish drain, and unchanged recorded-video path. A supervised browser run
+on the target deployment profile remains required for presentation cadence, actual overwrite
+counts, rendering behavior, and supported numerical limits.
+
+## X. live scheduler lifecycle race corrections
+
+Two lifecycle races found during architecture review were corrected before the checkpoint commit.
+A display-prediction rejection now increments `prediction_errors` only when its request object is
+still the active request and its captured generation, session, and source still match the current
+live camera. A late non-abort rejection from a stopped or superseded generation therefore cannot
+corrupt reset or new-session counters.
+
+The camera loop now retains the active JPEG capture promise. Live stop first disables frame
+admission and stops the scheduler, then awaits both the captured encoding promise and the current
+detector drain. If encoding completes during intentional stop, the immutable frame increments
+`selected`, is counted once in `shutdown_drops` and `dropped`, and is not offered to the detector.
+If encoding fails during intentional stop, it remains visible in `capture_errors` but does not
+invoke session failure. `finishCapture` therefore cannot release media or advance the generation
+before the active encoding has settled.
+
+Focused correction verification:
+
+```text
+python -m ruff check tests/unit/test_console_ui.py
+python -m pytest -q -p no:cacheprovider tests/unit/test_console_ui.py
+New-Item -ItemType Directory -Path '.verification_tmp' -Force
+python -m pytest -q -p no:cacheprovider --basetemp .verification_tmp/lifecycle-unit tests/unit
+```
+
+Result: Ruff passed, all 21 focused console tests passed, and all 158 unit tests passed in 9.43
+seconds. An initial full-unit invocation without `--basetemp` reached 148 passes but produced 10
+fixture setup errors because the host pytest temp root denied access; the workspace-base-temp rerun
+resolved that environmental condition with no test failure. Integration and model suites were not
+repeated because this correction changes only packaged browser lifecycle handling and its static
+unit contract tests.

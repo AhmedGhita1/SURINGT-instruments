@@ -606,7 +606,14 @@ const CLASS_COLORS = [
 ];
 
 const INFERENCE_FRAME_STRIDE = 5;
+const LIVE_DETECTOR_FPS = 5;
+const LIVE_MAX_OVERLAY_AGE_SECONDS = 0.4;
 const MAX_TIMING_SAMPLES = 1000;
+
+window.surgintLiveConfig = {
+  detector_fps: LIVE_DETECTOR_FPS,
+  max_overlay_age_seconds: LIVE_MAX_OVERLAY_AGE_SECONDS,
+};
 
 const ACTION_PRESENTATION = {
   "secure-transport-to-reprocessing": { key: "secure", title: "Secure for reprocessing", icon: "S" },
@@ -676,6 +683,7 @@ let running = false;
 let frames = 0;
 let mediaKind = null;
 let videoFrameCallback = null;
+let animationFrameCallback = null;
 let sessionStartedAt = null;
 let elapsedTimer = null;
 let latestDetections = [];
@@ -686,13 +694,69 @@ let finalizedAt = null;
 let latestResultTiming = null;
 let sourceIdentity = null;
 let sourceSequence = 0;
+let liveGeneration = 0;
+let liveScheduler = null;
+let stopLiveCapture = null;
+let displayPredictionRequest = null;
+let latestAcceptedFrame = null;
+let latestDisplayPredictions = [];
+let latestDisplayTimestamp = null;
+let latestPredictionTimestamp = null;
 const timingSamples = [];
-const schedulerTiming = { admitted: 0, busy_source_frames: 0, overwritten: 0 };
+const schedulerTiming = {
+  // A selection opportunity is a due live-source clock tick. A selected frame completed
+  // admission capture; a capture-busy drop did not create a frame or sequence identity.
+  selection_opportunities: 0,
+  selected: 0,
+  // Capture-busy drops are due ticks skipped before identity creation. Capture errors are
+  // attempted selections whose JPEG snapshot failed and stop the active capture.
+  capture_busy_drops: 0,
+  capture_errors: 0,
+  // Admitted frames started a detector request. A busy observation was offered while one
+  // request was active. Overwritten frames were pending frames replaced by a newer one.
+  admitted: 0,
+  busy_source_frames: 0,
+  overwritten: 0,
+  // Shutdown drops are pending or just-encoded frames discarded on stop. Dropped is the sum of
+  // capture-busy, overwritten, and shutdown drops; request failures are counted separately.
+  shutdown_drops: 0,
+  dropped: 0,
+  // Completed requests returned a parsed success response. Each current-generation completion
+  // is either accepted after correlation or suppressed. Errors and client aborts are separate.
+  completed: 0,
+  accepted_results: 0,
+  suppressed_results: 0,
+  request_errors: 0,
+  aborted_requests: 0,
+  // Capacity gauges are current detector-request state; max_pending must never exceed one.
+  in_flight: 0,
+  pending: 0,
+  max_pending: 0,
+  // Display prediction GETs are separately bounded to one active request. A prediction
+  // response can be suppressed as a whole; individual prediction records can be rejected.
+  prediction_requests: 0,
+  prediction_completed: 0,
+  prediction_accepted: 0,
+  prediction_suppressed: 0,
+  prediction_errors: 0,
+  prediction_aborted: 0,
+  // Invalid predictions are individual records rejected on receipt. Stale overlay frames are
+  // display ticks that age out stored records; rendered frames contain an enabled valid overlay.
+  invalid_predictions: 0,
+  stale_overlay_frames: 0,
+  rendered_overlay_frames: 0,
+  last_result_suppression: null,
+  last_prediction_suppression: null,
+};
 
 window.surgintTiming = {
   samples: timingSamples,
   scheduler: schedulerTiming,
   snapshot: function () { return timingSamples.map(function (sample) { return { ...sample }; }); },
+  schedulerSnapshot: function () { return { ...schedulerTiming }; },
+  liveState: function () {
+    return liveScheduler ? liveScheduler.snapshot() : { accepting: false, in_flight: false, pending: false };
+  },
 };
 
 const hfSign = new URLSearchParams(window.location.search).get("__sign");
@@ -735,6 +799,351 @@ function recordDisplayTiming(timing) {
   if (timingSamples.length > MAX_TIMING_SAMPLES) {
     timingSamples.shift();
   }
+}
+
+function resetSchedulerTiming() {
+  Object.keys(schedulerTiming).forEach(function (key) {
+    schedulerTiming[key] = key.startsWith("last_") ? null : 0;
+  });
+}
+
+function configuredLiveDetectorFps() {
+  const value = Number(window.surgintLiveConfig.detector_fps);
+  return Number.isFinite(value) && value > 0 ? value : LIVE_DETECTOR_FPS;
+}
+
+function configuredOverlayAgeSeconds() {
+  const value = Number(window.surgintLiveConfig.max_overlay_age_seconds);
+  return Number.isFinite(value) && value >= 0 ? value : LIVE_MAX_OVERLAY_AGE_SECONDS;
+}
+
+function liveGenerationMatches(generation, expectedSession, expectedSource) {
+  return generation === liveGeneration
+    && session === expectedSession
+    && sourceIdentity === expectedSource
+    && mediaKind === "camera";
+}
+
+function detectorResultSuppressionReason(frame, result, generation) {
+  if (!liveGenerationMatches(generation, frame.session_id, frame.source_id)) {
+    return "wrong-session";
+  }
+  if (!result || result.schema_version !== "1.1" || !result.frame) {
+    return "malformed-result";
+  }
+  if (result.frame.source_id !== frame.source_id) {
+    return "wrong-source";
+  }
+  if (result.frame.metadata_origin !== "client") {
+    return "wrong-metadata-origin";
+  }
+  if (
+    result.frame.sequence !== frame.sequence
+    || result.frame.captured_at !== frame.captured_at
+    || result.frame.source_width !== frame.source_width
+    || result.frame.source_height !== frame.source_height
+  ) {
+    return "mismatched-frame";
+  }
+  if (latestAcceptedFrame && result.frame.sequence <= latestAcceptedFrame.sequence) {
+    return "out-of-order-result";
+  }
+  if (!Number.isInteger(result.frame_count) || result.frame_count < 0 || !Array.isArray(result.detections)) {
+    return "malformed-result";
+  }
+  return null;
+}
+
+function acceptLiveDetectorResult(frame, completed, generation) {
+  const reason = detectorResultSuppressionReason(frame, completed.result, generation);
+  if (reason) {
+    schedulerTiming.suppressed_results += 1;
+    schedulerTiming.last_result_suppression = reason;
+    return false;
+  }
+  const result = completed.result;
+  latestAcceptedFrame = Object.freeze({
+    source_id: result.frame.source_id,
+    sequence: result.frame.sequence,
+    captured_at: result.frame.captured_at,
+    source_width: result.frame.source_width,
+    source_height: result.frame.source_height,
+  });
+  frames = result.frame_count;
+  updateDetections(result.detections);
+  latestResultTiming = completed.timing;
+  schedulerTiming.accepted_results += 1;
+  elements.finishCapture.disabled = false;
+  return true;
+}
+
+function createLatestFrameScheduler(generation, expectedSession, expectedSource, onError) {
+  let accepting = true;
+  let inFlight = null;
+  let pending = null;
+  let requestController = null;
+  const idleWaiters = [];
+
+  const publishCapacity = function () {
+    if (!isCurrent()) {
+      return;
+    }
+    schedulerTiming.in_flight = inFlight ? 1 : 0;
+    schedulerTiming.pending = pending ? 1 : 0;
+    schedulerTiming.max_pending = Math.max(schedulerTiming.max_pending, schedulerTiming.pending);
+  };
+
+  const settleIdle = function () {
+    if (inFlight || pending) {
+      return;
+    }
+    while (idleWaiters.length) {
+      idleWaiters.shift()();
+    }
+  };
+
+  const isCurrent = function () {
+    return liveGenerationMatches(generation, expectedSession, expectedSource);
+  };
+
+  const launch = function (frame) {
+    inFlight = frame;
+    requestController = new AbortController();
+    schedulerTiming.admitted += 1;
+    publishCapacity();
+
+    void postLiveFrame(frame, requestController.signal).then(function (completed) {
+      if (!isCurrent()) {
+        return;
+      }
+      schedulerTiming.completed += 1;
+      acceptLiveDetectorResult(frame, completed, generation);
+    }).catch(function (error) {
+      if (error && error.name === "AbortError") {
+        return;
+      }
+      if (isCurrent()) {
+        accepting = false;
+        schedulerTiming.request_errors += 1;
+        window.setTimeout(function () { onError(error); }, 0);
+      }
+    }).finally(function () {
+      inFlight = null;
+      requestController = null;
+      if (accepting && isCurrent() && pending) {
+        const next = pending;
+        pending = null;
+        publishCapacity();
+        launch(next);
+        return;
+      }
+      if (pending) {
+        pending = null;
+        schedulerTiming.shutdown_drops += 1;
+        schedulerTiming.dropped += 1;
+      }
+      publishCapacity();
+      settleIdle();
+    });
+  };
+
+  return {
+    offer: function (frame) {
+      if (!accepting || !isCurrent()) {
+        schedulerTiming.shutdown_drops += 1;
+        schedulerTiming.dropped += 1;
+        return;
+      }
+      if (!inFlight) {
+        launch(frame);
+        return;
+      }
+      schedulerTiming.busy_source_frames += 1;
+      if (pending) {
+        schedulerTiming.overwritten += 1;
+        schedulerTiming.dropped += 1;
+      }
+      pending = frame;
+      publishCapacity();
+    },
+    stop: function (abortInFlight) {
+      accepting = false;
+      if (pending) {
+        pending = null;
+        schedulerTiming.shutdown_drops += 1;
+        schedulerTiming.dropped += 1;
+      }
+      if (
+        abortInFlight
+        && requestController
+        && !requestController.signal.aborted
+      ) {
+        schedulerTiming.aborted_requests += 1;
+        requestController.abort();
+      }
+      publishCapacity();
+      if (!inFlight) {
+        return Promise.resolve();
+      }
+      return new Promise(function (resolve) { idleWaiters.push(resolve); });
+    },
+    snapshot: function () {
+      return {
+        generation: generation,
+        accepting: accepting,
+        in_flight: Boolean(inFlight),
+        in_flight_sequence: inFlight ? inFlight.sequence : null,
+        pending: Boolean(pending),
+        pending_sequence: pending ? pending.sequence : null,
+      };
+    },
+  };
+}
+
+function predictionSuppressionReason(prediction, displayedAt) {
+  if (!prediction || prediction.valid !== true || prediction.validity !== "valid") {
+    return "invalid-state";
+  }
+  if (
+    !Number.isInteger(prediction.track_id)
+    || !Number.isInteger(prediction.class_id)
+    || prediction.class_id < 0
+    || !["confirmed", "lost"].includes(prediction.track_state)
+    || typeof prediction.label !== "string"
+    || !Number.isFinite(prediction.score)
+    || !Number.isFinite(prediction.state_timestamp)
+    || !Number.isFinite(prediction.prediction_age)
+    || prediction.prediction_age < 0
+    || !Array.isArray(prediction.box)
+    || prediction.box.length !== 4
+    || !prediction.box.every(Number.isFinite)
+  ) {
+    return "non-finite-or-malformed";
+  }
+  if (prediction.box[2] <= prediction.box[0] || prediction.box[3] <= prediction.box[1]) {
+    return "invalid-geometry";
+  }
+  const age = displayedAt - prediction.state_timestamp;
+  if (!Number.isFinite(age) || age < 0 || age > configuredOverlayAgeSeconds()) {
+    return "over-age";
+  }
+  return null;
+}
+
+function displayPredictionsFor(displayedAt) {
+  const visible = latestDisplayPredictions.filter(function (prediction) {
+    return predictionSuppressionReason(prediction, displayedAt) === null;
+  });
+  if (visible.length < latestDisplayPredictions.length) {
+    schedulerTiming.stale_overlay_frames += 1;
+  }
+  if (visible.length && overlaysEnabled) {
+    schedulerTiming.rendered_overlay_frames += 1;
+  }
+  return visible;
+}
+
+function predictionResponseSuppressionReason(expected, payload, receivedAt) {
+  if (!liveGenerationMatches(expected.generation, expected.session_id, expected.source_id)) {
+    return "wrong-session";
+  }
+  if (!payload || payload.schema_version !== "1.1" || !Array.isArray(payload.predictions)) {
+    return "malformed-result";
+  }
+  if (payload.source_id !== expected.source_id) {
+    return "wrong-source";
+  }
+  if (payload.displayed_at !== expected.displayed_at) {
+    return "mismatched-display-time";
+  }
+  if (latestPredictionTimestamp !== null && payload.displayed_at <= latestPredictionTimestamp) {
+    return "out-of-order-result";
+  }
+  if (!Number.isFinite(receivedAt) || receivedAt < payload.displayed_at) {
+    return "invalid-display-time";
+  }
+  return null;
+}
+
+function stopDisplayPredictionRequest() {
+  const request = displayPredictionRequest;
+  if (request && !request.controller.signal.aborted) {
+    schedulerTiming.prediction_aborted += 1;
+    request.controller.abort();
+  }
+  displayPredictionRequest = null;
+}
+
+function requestCurrentDisplayPredictions(displayedAt, generation) {
+  if (
+    displayPredictionRequest
+    || !latestAcceptedFrame
+    || !liveGenerationMatches(generation, session, sourceIdentity)
+  ) {
+    return;
+  }
+  const expected = Object.freeze({
+    generation: generation,
+    session_id: session,
+    source_id: sourceIdentity,
+    displayed_at: displayedAt,
+  });
+  const controller = new AbortController();
+  const request = { expected: expected, controller: controller };
+  displayPredictionRequest = request;
+  schedulerTiming.prediction_requests += 1;
+
+  const url = new URL(apiUrl("/v1/sessions/" + expected.session_id + "/display-predictions"));
+  url.searchParams.set("source_id", expected.source_id);
+  url.searchParams.set("displayed_at", String(expected.displayed_at));
+  void fetch(url.toString(), { signal: controller.signal }).then(async function (response) {
+    if (!response.ok) {
+      throw new Error("Display prediction was unavailable (" + response.status + ").");
+    }
+    const payload = await response.json();
+    if (displayPredictionRequest !== request) {
+      return;
+    }
+    schedulerTiming.prediction_completed += 1;
+    const receivedAt = Math.max(
+      latestDisplayTimestamp === null ? expected.displayed_at : latestDisplayTimestamp,
+      performance.now() / 1000,
+    );
+    const reason = predictionResponseSuppressionReason(expected, payload, receivedAt);
+    if (reason) {
+      schedulerTiming.prediction_suppressed += 1;
+      schedulerTiming.last_prediction_suppression = reason;
+      return;
+    }
+
+    const accepted = [];
+    payload.predictions.forEach(function (prediction) {
+      const predictionReason = predictionSuppressionReason(prediction, receivedAt);
+      if (predictionReason) {
+        schedulerTiming.invalid_predictions += 1;
+        return;
+      }
+      accepted.push(Object.freeze({ ...prediction, box: Object.freeze(prediction.box.slice()) }));
+    });
+    latestDisplayPredictions = accepted;
+    latestPredictionTimestamp = payload.displayed_at;
+    schedulerTiming.prediction_accepted += 1;
+  }).catch(function (error) {
+    if (error && error.name === "AbortError") {
+      return;
+    }
+    if (
+      displayPredictionRequest !== request
+      || !liveGenerationMatches(expected.generation, expected.session_id, expected.source_id)
+    ) {
+      return;
+    }
+    schedulerTiming.prediction_errors += 1;
+  }).finally(function () {
+    if (displayPredictionRequest === request) {
+      displayPredictionRequest = null;
+    }
+  });
 }
 
 function setState(nextState, moveFocus) {
@@ -839,6 +1248,72 @@ async function deleteSession() {
   } catch (_error) {
     // Local state is already cleared; server expiry remains the fallback.
   }
+}
+
+async function captureLiveFrame(video, capturedAt, generation, expectedSession, expectedSource) {
+  const captureStartedAt = performance.now();
+  const sourceWidth = video.videoWidth;
+  const sourceHeight = video.videoHeight;
+  const sequence = sourceSequence;
+  sourceSequence += 1;
+  if (!sourceWidth || !sourceHeight) {
+    throw new Error("The camera did not provide valid source dimensions.");
+  }
+  if (capture.width !== sourceWidth || capture.height !== sourceHeight) {
+    capture.width = sourceWidth;
+    capture.height = sourceHeight;
+  }
+  captureContext.drawImage(video, 0, 0);
+  const blob = await new Promise(function (resolve) { capture.toBlob(resolve, "image/jpeg", 0.9); });
+  if (!blob) {
+    throw new Error("The current camera frame could not be captured.");
+  }
+  return Object.freeze({
+    blob: blob,
+    generation: generation,
+    session_id: expectedSession,
+    source_id: expectedSource,
+    sequence: sequence,
+    captured_at: capturedAt,
+    source_width: sourceWidth,
+    source_height: sourceHeight,
+    capture_started_at: captureStartedAt,
+    capture_ms: performance.now() - captureStartedAt,
+  });
+}
+
+async function postLiveFrame(frame, signal) {
+  const body = new FormData();
+  body.append("image", frame.blob, "frame.jpg");
+  body.append("schema_version", "1.1");
+  body.append("source_id", frame.source_id);
+  body.append("sequence", String(frame.sequence));
+  body.append("captured_at", String(frame.captured_at));
+  body.append("source_width", String(frame.source_width));
+  body.append("source_height", String(frame.source_height));
+  const requestStartedAt = performance.now();
+  const response = await fetch(apiUrl("/v1/sessions/" + frame.session_id + "/frames"), {
+    method: "POST",
+    body: body,
+    signal: signal,
+  });
+  if (!response.ok) {
+    throw new Error("The scanner rejected a camera frame (" + response.status + ").");
+  }
+  const responseHeadersAt = performance.now();
+  const result = await response.json();
+  const responseBodyAt = performance.now();
+  return {
+    result: result,
+    timing: {
+      capture_started_at: frame.capture_started_at,
+      capture_ms: frame.capture_ms,
+      request_ms: responseBodyAt - requestStartedAt,
+      response_body_ms: responseBodyAt - responseHeadersAt,
+      server: parseServerTiming(response.headers.get("Server-Timing")),
+      display_count: 0,
+    },
+  };
 }
 
 async function postFrame(video) {
@@ -958,6 +1433,13 @@ function updateDetections(detections) {
 }
 
 function resetSessionData() {
+  liveGeneration += 1;
+  if (liveScheduler) {
+    void liveScheduler.stop(true);
+  }
+  liveScheduler = null;
+  stopLiveCapture = null;
+  stopDisplayPredictionRequest();
   frames = 0;
   latestDetections = [];
   seenClasses = new Map();
@@ -966,10 +1448,12 @@ function resetSessionData() {
   latestResultTiming = null;
   sourceIdentity = null;
   sourceSequence = 0;
+  latestAcceptedFrame = null;
+  latestDisplayPredictions = [];
+  latestDisplayTimestamp = null;
+  latestPredictionTimestamp = null;
   timingSamples.length = 0;
-  schedulerTiming.admitted = 0;
-  schedulerTiming.busy_source_frames = 0;
-  schedulerTiming.overwritten = 0;
+  resetSchedulerTiming();
   elements.objectCount.textContent = "0";
   elements.elapsed.textContent = "00:00";
   elements.finishCapture.disabled = true;
@@ -983,11 +1467,27 @@ function resetSessionData() {
 
 function releaseMedia() {
   running = false;
+  liveGeneration += 1;
+  if (stopLiveCapture) {
+    void stopLiveCapture(true);
+  } else if (liveScheduler) {
+    void liveScheduler.stop(true);
+  }
+  stopLiveCapture = null;
+  liveScheduler = null;
+  schedulerTiming.in_flight = 0;
+  schedulerTiming.pending = 0;
+  stopDisplayPredictionRequest();
+  latestDisplayPredictions = [];
   stopElapsedTimer();
   if (source && videoFrameCallback !== null && source.cancelVideoFrameCallback) {
     source.cancelVideoFrameCallback(videoFrameCallback);
   }
   videoFrameCallback = null;
+  if (animationFrameCallback !== null) {
+    window.cancelAnimationFrame(animationFrameCallback);
+    animationFrameCallback = null;
+  }
   if (source) {
     source.pause();
     source.srcObject = null;
@@ -1028,17 +1528,126 @@ async function startCapture(video, runner, kind) {
   }
 }
 
-async function runCamera(video) {
-  while (running) {
-    schedulerTiming.admitted += 1;
-    const completed = await postFrame(video);
-    const result = completed.result;
-    frames = result.frame_count;
-    updateDetections(result.detections);
-    draw(video, result.detections);
-    recordDisplayTiming(completed.timing);
-    elements.finishCapture.disabled = false;
-  }
+function runCamera(video) {
+  const generation = liveGeneration;
+  const expectedSession = session;
+  const expectedSource = sourceIdentity;
+  const selectionIntervalMs = 1000 / configuredLiveDetectorFps();
+  let acceptingFrames = true;
+  let activeCapture = null;
+  let nextSelectionAt = null;
+
+  const reportError = function (error) {
+    if (liveGenerationMatches(generation, expectedSession, expectedSource)) {
+      void failCapture(error);
+    }
+  };
+  const scheduler = createLatestFrameScheduler(
+    generation,
+    expectedSession,
+    expectedSource,
+    reportError,
+  );
+  liveScheduler = scheduler;
+
+  const cancelDisplayLoop = function () {
+    if (videoFrameCallback !== null && video.cancelVideoFrameCallback) {
+      video.cancelVideoFrameCallback(videoFrameCallback);
+      videoFrameCallback = null;
+    }
+    if (animationFrameCallback !== null) {
+      window.cancelAnimationFrame(animationFrameCallback);
+      animationFrameCallback = null;
+    }
+  };
+
+  stopLiveCapture = async function (abortInFlight) {
+    acceptingFrames = false;
+    cancelDisplayLoop();
+    stopDisplayPredictionRequest();
+    const captureToDrain = activeCapture;
+    const schedulerStop = scheduler.stop(abortInFlight);
+    if (captureToDrain) {
+      await captureToDrain;
+    }
+    await schedulerStop;
+  };
+
+  const scheduleDisplay = function (callback) {
+    if (video.requestVideoFrameCallback) {
+      videoFrameCallback = video.requestVideoFrameCallback(callback);
+    } else {
+      animationFrameCallback = window.requestAnimationFrame(callback);
+    }
+  };
+
+  const showFrame = function (now) {
+    videoFrameCallback = null;
+    animationFrameCallback = null;
+    if (
+      !running
+      || !acceptingFrames
+      || !liveGenerationMatches(generation, expectedSession, expectedSource)
+    ) {
+      return;
+    }
+
+    latestDisplayTimestamp = now / 1000;
+    draw(video, displayPredictionsFor(latestDisplayTimestamp));
+    recordDisplayTiming(latestResultTiming);
+    updateElapsed();
+    requestCurrentDisplayPredictions(latestDisplayTimestamp, generation);
+
+    if (nextSelectionAt === null || now + 1e-6 >= nextSelectionAt) {
+      schedulerTiming.selection_opportunities += 1;
+      nextSelectionAt = nextSelectionAt === null ? now : nextSelectionAt;
+      do {
+        nextSelectionAt += selectionIntervalMs;
+      } while (nextSelectionAt <= now);
+
+      if (activeCapture) {
+        schedulerTiming.capture_busy_drops += 1;
+        schedulerTiming.dropped += 1;
+      } else {
+        const capturedAt = latestDisplayTimestamp;
+        activeCapture = captureLiveFrame(
+          video,
+          capturedAt,
+          generation,
+          expectedSession,
+          expectedSource,
+        ).then(function (frame) {
+          if (generation !== liveGeneration) {
+            return;
+          }
+          schedulerTiming.selected += 1;
+          if (
+            !acceptingFrames
+            || !liveGenerationMatches(generation, expectedSession, expectedSource)
+          ) {
+            schedulerTiming.shutdown_drops += 1;
+            schedulerTiming.dropped += 1;
+            return;
+          }
+          scheduler.offer(frame);
+        }).catch(function (error) {
+          if (generation !== liveGeneration) {
+            return;
+          }
+          schedulerTiming.capture_errors += 1;
+          if (acceptingFrames) {
+            reportError(error);
+          }
+        }).finally(function () {
+          activeCapture = null;
+        });
+      }
+    }
+
+    scheduleDisplay(showFrame);
+  };
+
+  scheduleDisplay(showFrame);
 }
 
 async function runVideo(video) {
@@ -1110,12 +1719,24 @@ async function runVideo(video) {
   await video.play();
 }
 
-function finishCapture() {
+async function finishCapture() {
   if (uiState !== "live" || frames < 1) {
     if (uiState === "live") {
       showAlert("Keep the tray in view until the first scan result is ready.");
     }
     return;
+  }
+  if (mediaKind === "camera" && stopLiveCapture) {
+    elements.finishCapture.disabled = true;
+    const stop = stopLiveCapture;
+    await stop(false);
+    if (uiState !== "live") {
+      return;
+    }
+    if (stopLiveCapture === stop) {
+      stopLiveCapture = null;
+      liveScheduler = null;
+    }
   }
   releaseMedia();
   const typeCount = seenClasses.size;
@@ -1442,11 +2063,14 @@ elements.overlayToggle.addEventListener("click", function () {
   elements.overlayToggle.setAttribute("aria-pressed", String(overlaysEnabled));
   elements.overlayToggle.textContent = overlaysEnabled ? "Overlays on" : "Overlays off";
   if (source && source.readyState >= 2) {
-    draw(source, latestDetections);
+    const detections = mediaKind === "camera" && latestDisplayTimestamp !== null
+      ? displayPredictionsFor(latestDisplayTimestamp)
+      : latestDetections;
+    draw(source, detections);
   }
 });
 
-elements.finishCapture.addEventListener("click", finishCapture);
+elements.finishCapture.addEventListener("click", function () { void finishCapture(); });
 elements.discard.addEventListener("click", function () { void discardCurrentSession(true); });
 elements.backToScan.addEventListener("click", function () { void discardCurrentSession(true); });
 elements.contextForm.addEventListener("change", updateContextValidity);
