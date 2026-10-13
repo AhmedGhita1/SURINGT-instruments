@@ -185,3 +185,20 @@ def test_console_records_bounded_capture_to_display_timing_without_queueing() ->
     assert "display_age_ms: performance.now() - timing.capture_started_at" in source
     assert "schedulerTiming.busy_source_frames += 1" in source
     assert "schedulerTiming.overwritten = 0" in source
+
+
+def test_console_sends_complete_client_temporal_metadata() -> None:
+    source = console_source()
+
+    for field in (
+        'body.append("schema_version", "1.1")',
+        'body.append("source_id", sourceIdentity)',
+        'body.append("sequence", String(sourceSequence))',
+        'body.append("captured_at", String(capturedAt))',
+        'body.append("source_width", String(video.videoWidth))',
+        'body.append("source_height", String(video.videoHeight))',
+    ):
+        assert field in source
+
+    assert "sourceSequence += 1" in source
+    assert "sourceIdentity = kind + \":\" + session" in source

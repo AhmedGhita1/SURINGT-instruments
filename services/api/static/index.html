@@ -684,6 +684,8 @@ let overlaysEnabled = true;
 let finalizedResult = null;
 let finalizedAt = null;
 let latestResultTiming = null;
+let sourceIdentity = null;
+let sourceSequence = 0;
 const timingSamples = [];
 const schedulerTiming = { admitted: 0, busy_source_frames: 0, overwritten: 0 };
 
@@ -841,6 +843,7 @@ async function deleteSession() {
 
 async function postFrame(video) {
   const captureStartedAt = performance.now();
+  const capturedAt = mediaKind === "video" ? video.currentTime : captureStartedAt / 1000;
   if (capture.width !== video.videoWidth || capture.height !== video.videoHeight) {
     capture.width = video.videoWidth;
     capture.height = video.videoHeight;
@@ -853,6 +856,13 @@ async function postFrame(video) {
   const captureCompletedAt = performance.now();
   const body = new FormData();
   body.append("image", blob, "frame.jpg");
+  body.append("schema_version", "1.1");
+  body.append("source_id", sourceIdentity);
+  body.append("sequence", String(sourceSequence));
+  body.append("captured_at", String(capturedAt));
+  body.append("source_width", String(video.videoWidth));
+  body.append("source_height", String(video.videoHeight));
+  sourceSequence += 1;
   const requestStartedAt = performance.now();
   const response = await fetch(apiUrl("/v1/sessions/" + session + "/frames"), {
     method: "POST",
@@ -954,6 +964,8 @@ function resetSessionData() {
   finalizedResult = null;
   finalizedAt = null;
   latestResultTiming = null;
+  sourceIdentity = null;
+  sourceSequence = 0;
   timingSamples.length = 0;
   schedulerTiming.admitted = 0;
   schedulerTiming.busy_source_frames = 0;
@@ -1006,6 +1018,7 @@ async function startCapture(video, runner, kind) {
   setInitialBusy(true);
   try {
     session = await createSession();
+    sourceIdentity = kind + ":" + session;
     running = true;
     setState("live");
     startElapsedTimer();

@@ -11,7 +11,7 @@ from surgint.model.boxes import nms
 from surgint.model.decode import decode
 from surgint.model.detector import Detector
 from surgint.model.transform import Transform
-from surgint.runtime.bytetrack import ByteTrack
+from surgint.runtime.bytetrack import ByteTrack, DisplayPrediction
 
 
 @dataclass(frozen=True)
@@ -62,16 +62,25 @@ class Pipeline:
         transform = Transform(meta["input_size"], meta["pad_color"], meta["rescale_factor"])
         return cls(detector, transform, task, tracker, max_detections, nms_iou)
 
-    def predict(self, frame: np.ndarray, score_threshold: float) -> Detections:
-        return self.predict_batch([frame], score_threshold)[0]
+    def predict(
+        self,
+        frame: np.ndarray,
+        score_threshold: float,
+        captured_at: float | None = None,
+    ) -> Detections:
+        capture_timestamps = None if captured_at is None else [captured_at]
+        return self.predict_batch([frame], score_threshold, capture_timestamps)[0]
 
     def predict_batch(
         self,
         frames: List[np.ndarray],
         score_threshold: float,
+        capture_timestamps: Optional[List[float]] = None,
     ) -> List[Detections]:
         """Run one model forward pass, then update tracking in frame order."""
         started_at = perf_counter()
+        if capture_timestamps is not None and len(capture_timestamps) != len(frames):
+            raise ValueError("capture_timestamps must align one-to-one with frames")
         if not frames:
             self.last_timing = PipelineTiming(0.0, 0.0, 0.0, 0.0, 0.0)
             return []
@@ -95,7 +104,7 @@ class Pipeline:
         tracking_ms = 0.0
 
         results = []
-        for sample, (boxes, scores, class_ids) in zip(samples, decoded):
+        for index, (sample, (boxes, scores, class_ids)) in enumerate(zip(samples, decoded)):
             phase_started_at = perf_counter()
             boxes = self.transform.postprocess(boxes, sample["scale"], sample["frame_size"])
 
@@ -109,7 +118,12 @@ class Pipeline:
             postprocess_ms += _elapsed_ms(phase_started_at)
 
             phase_started_at = perf_counter()
-            results.append(self.tracker.update(detections) if self.tracker else detections)
+            captured_at = None if capture_timestamps is None else capture_timestamps[index]
+            results.append(
+                self.tracker.update(detections, captured_at=captured_at)
+                if self.tracker
+                else detections
+            )
             tracking_ms += _elapsed_ms(phase_started_at)
 
         self.last_timing = PipelineTiming(
@@ -120,6 +134,12 @@ class Pipeline:
             total_ms=_elapsed_ms(started_at),
         )
         return results
+
+    def display_predictions(self, displayed_at: float) -> tuple[DisplayPrediction, ...]:
+        """Project confirmed tracking state without creating new observations."""
+        if self.tracker is None:
+            return ()
+        return self.tracker.display_predictions(displayed_at)
 
     def reset(self) -> None:
         """drop the tracking state. call between sequences"""

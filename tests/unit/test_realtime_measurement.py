@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from pipelines.measure_realtime import (
@@ -5,6 +6,7 @@ from pipelines.measure_realtime import (
     replay_overlay_age,
     selection_indices,
     simulate_sequential_scheduler,
+    temporal_form,
 )
 
 
@@ -53,3 +55,16 @@ def test_overlay_replay_uses_only_results_completed_by_each_display_frame():
     assert result["count"] == 4
     assert result["p50"] == pytest.approx(150.0)
     assert result["max"] == pytest.approx(200.0)
+
+
+def test_temporal_form_sends_complete_versioned_source_metadata():
+    frame = np.zeros((240, 320, 3), dtype=np.uint8)
+
+    assert temporal_form("measure:session", 7, 1.4, frame) == {
+        "schema_version": "1.1",
+        "source_id": "measure:session",
+        "sequence": "7",
+        "captured_at": "1.4",
+        "source_width": "320",
+        "source_height": "240",
+    }

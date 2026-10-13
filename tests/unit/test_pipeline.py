@@ -15,6 +15,7 @@ coverage:
 """
 
 import numpy as np
+import pytest
 import torch
 
 from surgint.model import Detections
@@ -171,3 +172,36 @@ def test_predict_batch_runs_one_forward_pass_and_tracks_in_order():
     assert len(results) == CONFIRM_HITS
     assert all(len(result.boxes) == 0 for result in results[:-1])
     assert results[-1].track_ids.tolist() == [1]
+
+
+def test_timestamped_batch_uses_elapsed_confirmation_time():
+    transform = Transform(INPUT_SIZE)
+    detector = StubDetector(np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32))
+    pipeline = Pipeline(detector, transform, "detection-tracking")
+
+    fast_timestamps = [step * 0.1 for step in range(CONFIRM_HITS)]
+    fast = pipeline.predict_batch(
+        [blank() for _ in fast_timestamps],
+        0.0,
+        capture_timestamps=fast_timestamps,
+    )
+    assert all(len(result.boxes) == 0 for result in fast)
+
+    later_timestamps = [step * 0.1 for step in range(CONFIRM_HITS, 9)]
+    later = pipeline.predict_batch(
+        [blank() for _ in later_timestamps],
+        0.0,
+        capture_timestamps=later_timestamps,
+    )
+    assert later[-1].track_ids.tolist() == [1]
+
+
+def test_batch_rejects_misaligned_capture_timestamps():
+    pipeline = Pipeline(
+        StubDetector(np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)),
+        Transform(INPUT_SIZE),
+        "detection-tracking",
+    )
+
+    with pytest.raises(ValueError, match="one-to-one"):
+        pipeline.predict_batch([blank(), blank()], 0.0, capture_timestamps=[0.0])

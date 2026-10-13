@@ -147,6 +147,23 @@ def encode_jpeg(frame: np.ndarray) -> bytes:
     return stream.getvalue()
 
 
+def temporal_form(
+    source_id: str,
+    sequence: int,
+    captured_at: float,
+    frame: np.ndarray,
+) -> dict[str, str]:
+    """Build the complete versioned temporal form contract for one frame."""
+    return {
+        "schema_version": "1.1",
+        "source_id": source_id,
+        "sequence": str(sequence),
+        "captured_at": str(captured_at),
+        "source_width": str(frame.shape[1]),
+        "source_height": str(frame.shape[0]),
+    }
+
+
 def measure_rate(
     client: TestClient,
     dataset: SurgintDataset,
@@ -190,6 +207,12 @@ def measure_rate(
         response = client.post(
             f"/v1/sessions/{session_id}/frames",
             files={"image": ("frame.jpg", encoded, "image/jpeg")},
+            data=temporal_form(
+                f"measure:{session_id}",
+                sample_number,
+                index / source_fps,
+                sample["frame"],
+            ),
         )
         request_ms = (perf_counter() - request_started_at) * 1000.0
         response.raise_for_status()
@@ -322,6 +345,12 @@ def measure_remote_rate(
             response = client.post(
                 f"/v1/sessions/{session_id}/frames",
                 files={"image": ("frame.jpg", encoded, "image/jpeg")},
+                data=temporal_form(
+                    f"measure:{session_id}",
+                    len(admissions),
+                    source_time,
+                    sample["frame"],
+                ),
             )
             request_ms = (perf_counter() - request_started_at) * 1000.0
             response.raise_for_status()
@@ -455,10 +484,16 @@ def run(args: argparse.Namespace) -> dict:
     with TestClient(application) as client:
         warmup_session = client.post("/v1/sessions").json()["session_id"]
         warmup_frame = encode_jpeg(dataset[0]["frame"])
-        for _ in range(args.warmup_frames):
+        for sequence in range(args.warmup_frames):
             response = client.post(
                 f"/v1/sessions/{warmup_session}/frames",
                 files={"image": ("frame.jpg", warmup_frame, "image/jpeg")},
+                data=temporal_form(
+                    f"warmup:{warmup_session}",
+                    sequence,
+                    sequence / args.source_fps,
+                    dataset[0]["frame"],
+                ),
             )
             response.raise_for_status()
         client.delete(f"/v1/sessions/{warmup_session}")
@@ -519,10 +554,16 @@ def run_remote(args: argparse.Namespace) -> dict:
         warmup_session = warmup_response.json()["session_id"]
         warmup_frame = encode_jpeg(dataset[0]["frame"])
         try:
-            for _ in range(args.warmup_frames):
+            for sequence in range(args.warmup_frames):
                 response = client.post(
                     f"/v1/sessions/{warmup_session}/frames",
                     files={"image": ("frame.jpg", warmup_frame, "image/jpeg")},
+                    data=temporal_form(
+                        f"warmup:{warmup_session}",
+                        sequence,
+                        sequence / args.source_fps,
+                        dataset[0]["frame"],
+                    ),
                 )
                 response.raise_for_status()
                 parse_server_timing(response.headers["server-timing"])

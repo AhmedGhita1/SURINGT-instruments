@@ -77,6 +77,27 @@ def test_predict():
     assert np.trace(predicted_covariance) > np.trace(covariance), "process noise must widen the prior"
 
 
+def test_predict_scales_motion_by_elapsed_source_time():
+    kalman = KalmanFilter(reference_interval_seconds=0.2)
+    mean = np.array([100.0, 100.0, 0.5, 40.0, 2.0, -1.0, 0.0, 0.0])
+    covariance = np.diag(np.full(STATE_DIM, 0.1))
+
+    half_step, _ = kalman.predict(mean, covariance, elapsed_seconds=0.1)
+    double_step, _ = kalman.predict(mean, covariance, elapsed_seconds=0.4)
+
+    assert np.allclose(half_step[:2], [101.0, 99.5])
+    assert np.allclose(double_step[:2], [104.0, 98.0])
+    assert np.array_equal(mean[:2], [100.0, 100.0]), "prediction must not mutate its input"
+
+
+def test_predict_rejects_invalid_elapsed_time():
+    kalman = KalmanFilter()
+    mean, covariance = kalman.initiate(MEASUREMENT)
+
+    with np.testing.assert_raises_regex(ValueError, "non-negative"):
+        kalman.predict(mean, covariance, elapsed_seconds=-0.1)
+
+
 def test_project():
     """state space to measurement space"""
 

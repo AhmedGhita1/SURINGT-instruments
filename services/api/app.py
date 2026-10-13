@@ -4,20 +4,24 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
 from time import perf_counter
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 
 from services.api.schemas import (
+    DisplayPredictionResponse,
+    DisplayPredictionsResponse,
     FinalizedItemResponse,
     FinalizedSessionResponse,
     FinalizeSessionRequest,
+    FrameIdentityResponse,
     FrameProcessedResponse,
     HealthResponse,
+    ResultTimingResponse,
     SessionCreatedResponse,
     TrackedDetectionResponse,
     VideoProcessedResponse,
@@ -28,6 +32,14 @@ from services.api.video import InvalidVideoError, decode_sampled_frames
 from surgint.decision import ItemContextOverride, SessionContext
 from surgint.model.detector import Detector
 from surgint.model.transform import Transform
+from surgint.runtime.temporal import (
+    FrameDimensionError,
+    FrameIdentity,
+    FrameOrderError,
+    ResultTiming,
+    SourceIdentityError,
+    TemporalContractError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +52,42 @@ def _elapsed_ms(started_at: float) -> float:
 
 def _server_timing_header(measurements: dict[str, float]) -> str:
     return ", ".join(f"{name};dur={duration:.3f}" for name, duration in measurements.items())
+
+
+def _client_frame_identity(
+    schema_version: str | None,
+    source_id: str | None,
+    sequence: int | None,
+    captured_at: float | None,
+    source_width: int | None,
+    source_height: int | None,
+) -> FrameIdentity | None:
+    values = (schema_version, source_id, sequence, captured_at, source_width, source_height)
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="temporal frame metadata must be supplied together",
+        )
+    if schema_version != "1.1":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="unsupported frame schema_version",
+        )
+    try:
+        return FrameIdentity(
+            source_id=source_id,
+            sequence=sequence,
+            captured_at=captured_at,
+            source_width=source_width,
+            source_height=source_height,
+        )
+    except TemporalContractError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
 
 
 def create_app(
@@ -163,6 +211,12 @@ def create_app(
         session_id: UUID,
         request: Request,
         image: Annotated[UploadFile, File()],
+        schema_version: Annotated[Literal["1.1"] | None, Form()] = None,
+        source_id: Annotated[str | None, Form()] = None,
+        sequence: Annotated[int | None, Form()] = None,
+        captured_at: Annotated[float | None, Form()] = None,
+        source_width: Annotated[int | None, Form()] = None,
+        source_height: Annotated[int | None, Form()] = None,
     ) -> FrameProcessedResponse:
         request.state.server_timing = {
             "receive": _elapsed_ms(request.state.server_timing_started_at),
@@ -186,6 +240,15 @@ def create_app(
                 detail="invalid image",
             ) from error
 
+        client_identity = _client_frame_identity(
+            schema_version,
+            source_id,
+            sequence,
+            captured_at,
+            source_width,
+            source_height,
+        )
+
         lock_started_at = perf_counter()
         with session.lock:
             if session.decision_support.is_finalized:
@@ -193,9 +256,31 @@ def create_app(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="session has already been finalized",
                 )
+            try:
+                frame_identity = session.resolve_frame_identity(
+                    client_identity,
+                    legacy_source_id=f"legacy:{session_id}",
+                    source_width=int(frame.shape[1]),
+                    source_height=int(frame.shape[0]),
+                )
+            except FrameDimensionError as error:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=str(error),
+                ) from error
+            except (SourceIdentityError, FrameOrderError) as error:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=str(error),
+                ) from error
             with application.state.inference_lock:
                 request.state.server_timing["queue"] = _elapsed_ms(lock_started_at)
-                detections = session.pipeline.predict(frame, score_threshold=0.0)
+                processing_started_at = perf_counter()
+                detections = session.pipeline.predict(
+                    frame,
+                    score_threshold=0.0,
+                    captured_at=frame_identity.captured_at,
+                )
             pipeline_timing = session.pipeline.last_timing
             if pipeline_timing is not None:
                 request.state.server_timing.update(
@@ -210,6 +295,8 @@ def create_app(
             session.decision_support.update(detections)
             request.state.server_timing["inventory"] = _elapsed_ms(phase_started_at)
             frame_count = session.decision_support.frame_count
+            session.record_frame_identity(frame_identity)
+            processing_completed_at = perf_counter()
 
         labels = session.pipeline.detector.manifest.labels
         if detections.track_ids is None:
@@ -229,9 +316,81 @@ def create_app(
                 detections.track_ids,
             )
         ]
+        result_created_at = perf_counter()
+        timing = ResultTiming(
+            received_at=request.state.server_timing_started_at,
+            processing_started_at=processing_started_at,
+            processing_completed_at=processing_completed_at,
+            result_created_at=result_created_at,
+        )
         return FrameProcessedResponse(
+            frame=FrameIdentityResponse(
+                source_id=frame_identity.source_id,
+                sequence=frame_identity.sequence,
+                captured_at=frame_identity.captured_at,
+                source_width=frame_identity.source_width,
+                source_height=frame_identity.source_height,
+                metadata_origin=frame_identity.origin.value,
+            ),
+            timing=ResultTimingResponse(
+                received_at=timing.received_at,
+                processing_started_at=timing.processing_started_at,
+                processing_completed_at=timing.processing_completed_at,
+                result_created_at=timing.result_created_at,
+            ),
             frame_count=frame_count,
             detections=response_detections,
+        )
+
+    @application.get(
+        "/v1/sessions/{session_id}/display-predictions",
+        response_model=DisplayPredictionsResponse,
+    )
+    def display_predictions(
+        session_id: UUID,
+        source_id: Annotated[str, Query(min_length=1, max_length=128)],
+        displayed_at: Annotated[float, Query(ge=0.0, allow_inf_nan=False)],
+    ) -> DisplayPredictionsResponse:
+        with application.state.sessions_lock:
+            session = application.state.sessions.get(session_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="session not found",
+            )
+
+        with session.lock:
+            try:
+                session.validate_display_timestamp(source_id, displayed_at)
+                predictions = session.pipeline.display_predictions(displayed_at)
+            except (SourceIdentityError, FrameOrderError, ValueError) as error:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=str(error),
+                ) from error
+            frame_count = session.decision_support.frame_count
+
+        labels = session.pipeline.detector.manifest.labels
+        return DisplayPredictionsResponse(
+            source_id=source_id,
+            displayed_at=displayed_at,
+            frame_count=frame_count,
+            predictions=[
+                DisplayPredictionResponse(
+                    track_id=prediction.track_id,
+                    class_id=prediction.class_id,
+                    label=labels[prediction.class_id],
+                    score=prediction.score,
+                    box=tuple(float(coordinate) for coordinate in prediction.box),
+                    track_state=prediction.track_state.value,
+                    state_timestamp=prediction.state_timestamp,
+                    prediction_age=prediction.prediction_age,
+                    position_uncertainty=prediction.position_uncertainty,
+                    validity=prediction.validity.value,
+                    valid=prediction.valid,
+                )
+                for prediction in predictions
+            ],
         )
 
     @application.post(

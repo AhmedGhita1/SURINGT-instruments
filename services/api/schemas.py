@@ -20,9 +20,51 @@ class TrackedDetectionResponse(BaseModel):
     box: tuple[float, float, float, float]
 
 
+class FrameIdentityResponse(BaseModel):
+    source_id: str
+    sequence: int
+    captured_at: float
+    source_width: int
+    source_height: int
+    metadata_origin: Literal["client", "server-generated-legacy"]
+
+
+class ResultTimingResponse(BaseModel):
+    clock: Literal["server-monotonic"] = "server-monotonic"
+    received_at: float
+    processing_started_at: float
+    processing_completed_at: float
+    result_created_at: float
+
+
 class FrameProcessedResponse(BaseModel):
+    schema_version: Literal["1.1"] = "1.1"
+    frame: FrameIdentityResponse
+    timing: ResultTimingResponse
     frame_count: int
     detections: list[TrackedDetectionResponse]
+
+
+class DisplayPredictionResponse(BaseModel):
+    track_id: int
+    class_id: int
+    label: str
+    score: float
+    box: tuple[float, float, float, float]
+    track_state: Literal["confirmed", "lost"]
+    state_timestamp: float
+    prediction_age: float
+    position_uncertainty: float
+    validity: Literal["valid", "too-old", "non-finite", "invalid-geometry"]
+    valid: bool
+
+
+class DisplayPredictionsResponse(BaseModel):
+    schema_version: Literal["1.1"] = "1.1"
+    source_id: str
+    displayed_at: float
+    frame_count: int
+    predictions: list[DisplayPredictionResponse]
 
 
 class VideoProcessedResponse(BaseModel):

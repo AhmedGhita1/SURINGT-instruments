@@ -1,12 +1,12 @@
 # verification
 
-> records the measurement-gate evidence for the existing sequential real-time inference path.
+> records the measurement-gate and temporal-contract evidence for real-time inference.
 
-**status:** measurement gate, awaiting profile approval
+**status:** temporal and tracking contract checkpoint, awaiting commit
 
 ## A. evidence scope
 
-This checkpoint instruments the current sequential path without changing its scheduling,
+The measurement checkpoint instruments the current sequential path without changing its scheduling,
 tracking, inventory, or finalization behavior. The recorded run is a development diagnostic,
 not deployment acceptance and not evidence that the product supports a live detector rate.
 
@@ -326,11 +326,148 @@ requested hardware `t4-small`, sleep time 900, and the same Dockerfile and READM
 - the remote client exercised a real public network path, but did not isolate network RTT, proxy
   overhead, browser JPEG behavior, rendering, a physical camera, or concurrent streams;
 - held-overlay age is replayed from actual timestamps, not observed in a browser, and prediction
-  error is unavailable because display prediction is not implemented;
-- fixed-step tracking means rate comparisons also change the tracker's implicit time unit;
+  error is unavailable because display prediction was not implemented in the measured build;
+- the measured build used fixed-step tracking, so rate comparisons also changed the tracker's
+  implicit time unit;
 - the base image and weights are content-addressed, but the upstream model repository revision was
   unavailable from the image manifest;
 - no supported detector rate or acceptance threshold is approved at this gate.
 
-Stop here for architect and user approval. Do not optimize or continue to temporal contracts,
-scheduling, prediction, or recorded-video changes before that decision.
+The architect and user approved proceeding from this measured profile to the temporal and tracking
+contract checkpoint. Optimization and supported-profile selection remain unapproved. Scheduler,
+overlay-rendering, and recorded-video changes remain deferred to later checkpoints.
+
+## P. temporal frame and result contract
+
+The frame route now supports two explicit compatibility modes:
+
+- the supported client path supplies schema version 1.1, source identity, sequence, monotonic
+  capture timestamp, source width, and source height as one all-or-none form set;
+- the compatibility path supplies none of those fields and receives an internal sequential source
+  identity and deterministic timestamp advanced by the tracker's nominal 0.2-second interval,
+  marked `server-generated-legacy`. This synthetic timing preserves fifth-observation confirmation
+  for existing clients; it is not measured source timing and not acceptance evidence.
+
+Partial metadata and invalid field values are rejected. A client-bound session rejects source
+changes, repeated or decreasing sequence values, repeated or decreasing capture timestamps, and
+declared dimensions that differ from the decoded image. Source/order state remains isolated per
+session. Identity state is recorded only after the detector-backed result updates the inventory.
+
+Frame responses retain the existing `frame_count` and `detections` fields and add schema version
+1.1, the accepted frame identity including metadata origin, and monotonic server receipt,
+processing-start, processing-complete, and result-creation boundaries. The packaged console and
+the local and remote measurement harnesses send the complete client metadata set. No transport or
+scheduler behavior changed in this checkpoint.
+
+## Q. elapsed-time tracking contract
+
+Kalman prediction now scales constant-velocity motion and process noise by elapsed source time.
+For the same timestamped detection sequence, repeated runs produce the same track identities,
+boxes, filter state, and observation history.
+
+Track confirmation requires both five detector-backed observations and at least 0.8 seconds from
+the first through the latest matched observation. Thus a 5 FPS stream can confirm on its fifth
+observation at 0.8 seconds, while five observations at 10 FPS remain tentative and confirmation
+occurs on the ninth observation at 0.8 seconds. The legacy direct-runtime bridge advances by the
+0.2-second reference interval, preserving the prior five-update confirmation point for callers
+that do not yet provide timestamps.
+
+Loss is elapsed-time based. Unless explicitly overridden, its timeout is `track_buffer` multiplied
+by the fixed 0.2-second reference interval, not by the number or rate of subsequent tracker calls.
+Invalid and non-advancing explicit tracker timestamps are rejected before the update proceeds.
+
+## R. display prediction isolation
+
+The runtime and a read-only API route expose display-only projections for tracks that have been
+confirmed at least once. Each projection includes track identity, class and score, projected box,
+track state, last detector-backed state timestamp, prediction age, positional uncertainty, and a
+validity value of `valid`, `too-old`, `non-finite`, or `invalid-geometry`. The provisional runtime
+age condition is 0.4 seconds, carried forward from the measurement guardrail; actual suppression
+in the console is a later checkpoint.
+
+Focused tests snapshot the filter mean and covariance, hit count, class votes and scores,
+observation timestamps, track lifecycle state and timestamps, and tracker timestamp before a
+display projection. Repeated projections return the same result and leave every snapshot value
+unchanged. The projected box is read-only. Integration tests compare otherwise identical sessions
+with and without display-prediction reads and prove unchanged inventory frame counts and identical
+finalized item decisions. Display-only predictions therefore add no hits, votes, observations, or
+history and do not update inventory, session frame counts, finalization, or handling decisions.
+
+Confirmed detector-backed frame responses retain their existing meaning. The display endpoint
+does not write to the detector-backed response, and display reads remain available after
+finalization without reopening or changing the finalized session.
+
+## S. temporal checkpoint verification
+
+Focused checks:
+
+```text
+python -m ruff check surgint/runtime/temporal.py surgint/runtime/kalman.py surgint/runtime/bytetrack.py surgint/runtime/pipeline.py services/api/sessions.py services/api/schemas.py services/api/app.py pipelines/measure_realtime.py tests/unit/test_temporal.py tests/unit/test_kalman.py tests/unit/test_bytetrack.py tests/unit/test_pipeline.py tests/unit/test_console_ui.py tests/unit/test_realtime_measurement.py tests/integration/test_api_sessions.py tests/integration/test_session.py tests/integration/test_decision_support.py
+python -m pytest -q -p no:cacheprovider tests/unit/test_temporal.py tests/unit/test_kalman.py tests/unit/test_bytetrack.py tests/unit/test_pipeline.py tests/unit/test_console_ui.py tests/unit/test_realtime_measurement.py tests/integration/test_api_sessions.py tests/integration/test_session.py tests/integration/test_decision_support.py
+```
+
+Result: focused Ruff passed and all 95 focused tests passed.
+
+The repository verification script remains blocked by the host PowerShell execution policy
+recorded in section H. Its equivalent commands ran with a workspace base-temp directory:
+
+```text
+New-Item -ItemType Directory -Path '.verification_tmp' -Force
+python -m ruff check services surgint tests pipelines/measure_realtime.py
+python -m pytest -q -p no:cacheprovider --basetemp .verification_tmp/temporal-unit tests/unit
+python -m pytest -q -p no:cacheprovider --basetemp .verification_tmp/temporal-integration tests/integration
+python -m pytest -q -p no:cacheprovider --basetemp .verification_tmp/temporal-model tests/model
+```
+
+Result: Ruff passed, 148 unit tests passed, 114 integration tests passed, and 10 model tests passed.
+The model suite completed in 401.82 seconds.
+
+An optional `ruff format --check` diagnostic was not part of the repository verification script.
+It reported existing format drift in eight mixed pre-existing and changed files, including
+long-standing test formatting. No bulk formatting rewrite was made in this scoped checkpoint;
+the required Ruff lint check passed.
+
+The remaining limitations are explicit:
+
+- legacy-generated timestamps are compatibility-only and cannot support source-time acceptance;
+- the console sends full temporal metadata but still uses the existing sequential request loop and
+  does not consume display predictions;
+- the 0.4-second display validity guardrail is provisional, and no UI stale-overlay suppression is
+  implemented yet;
+- recorded-video processing still uses the deterministic legacy 0.2-second runtime bridge rather
+  than an exact persisted source timestamp contract;
+- the bounded latest-frame scheduler, overwrite slot, independent browser display clock, and
+  target-hardware 5, 6, and 10 FPS rerun remain future checkpoints;
+- this checkpoint changes no tray inventory evidence rule, finalization rule, handling decision,
+  transport, serving infrastructure, model, or worker topology.
+
+## T. legacy API compatibility correction
+
+Architecture review found that using request-arrival time for omitted-metadata API frames could
+prevent a fast legacy client from accumulating the 0.8 elapsed seconds now required for
+confirmation. The compatibility bridge therefore starts each legacy session at synthetic source
+time 0.0 and advances by the tracking pipeline's nominal interval, currently 0.2 seconds. This
+preserves the historical fifth-observation confirmation point deterministically while retaining
+the `server-generated-legacy` origin and non-acceptance status. Client-supplied timestamps remain
+strictly increasing source time and are not replaced or relaxed by this bridge.
+
+An API integration regression submits five matching frames without temporal form fields. It
+verifies synthetic timestamps 0.0 through 0.8, no confirmed response on frames one through four,
+track confirmation on frame five, and a finalized inventory containing the detected class with
+count one.
+
+Correction verification:
+
+```text
+python -m ruff check services/api/app.py services/api/sessions.py tests/integration/test_api_sessions.py
+python -m pytest -q -p no:cacheprovider tests/integration/test_api_sessions.py tests/unit/test_temporal.py tests/unit/test_bytetrack.py tests/unit/test_pipeline.py tests/integration/test_session.py tests/integration/test_decision_support.py
+New-Item -ItemType Directory -Path '.verification_tmp' -Force
+python -m ruff check services surgint tests pipelines/measure_realtime.py
+python -m pytest -q -p no:cacheprovider --basetemp .verification_tmp/legacy-unit tests/unit
+python -m pytest -q -p no:cacheprovider --basetemp .verification_tmp/legacy-integration tests/integration
+```
+
+Result: focused Ruff passed, 70 targeted tests passed, repository Ruff passed, 148 unit tests
+passed, and 115 integration tests passed. The previously completed 10-test model suite was not
+repeated because this correction changes only API compatibility time synthesis and its integration
+test, not detector or model behavior.

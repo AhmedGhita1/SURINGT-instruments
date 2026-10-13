@@ -1,3 +1,5 @@
+from math import isfinite, sqrt
+
 import numpy as np
 
 # state is [cx, cy, aspect, height] and their velocities; only the first four are measured
@@ -25,15 +27,19 @@ def to_box(measurement: np.ndarray) -> np.ndarray:
 
 
 class KalmanFilter:
-    """constant velocity over box centre, aspect, and height. assumes a uniform frame interval"""
+    """Constant velocity over box centre, aspect, and height with variable elapsed time."""
 
-    def __init__(self, position_weight: float = 1 / 20, velocity_weight: float = 1 / 160):
+    def __init__(
+        self,
+        position_weight: float = 1 / 20,
+        velocity_weight: float = 1 / 160,
+        reference_interval_seconds: float = 1.0,
+    ):
+        if not isfinite(reference_interval_seconds) or reference_interval_seconds <= 0.0:
+            raise ValueError("reference_interval_seconds must be finite and positive")
         self.position_weight = position_weight
         self.velocity_weight = velocity_weight
-
-        # one frame per step. each position gains its velocity.
-        self.motion_mat = np.eye(STATE_DIM)
-        self.motion_mat[:MEASUREMENT_DIM, MEASUREMENT_DIM:] = np.eye(MEASUREMENT_DIM)
+        self.reference_interval_seconds = reference_interval_seconds
 
         # a detection observes the position half.
         self.update_mat = np.eye(MEASUREMENT_DIM, STATE_DIM)
@@ -65,10 +71,32 @@ class KalmanFilter:
         std = self._std(float(measurement[3]), position_scale=2.0, velocity_scale=10.0)
         return mean, np.diag(np.square(std))
 
-    def predict(self, mean: np.ndarray, covariance: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        std = self._std(float(mean[3]), position_scale=1.0, velocity_scale=1.0)
-        mean = self.motion_mat @ mean
-        covariance = self.motion_mat @ covariance @ self.motion_mat.T + np.diag(np.square(std))
+    def predict(
+        self,
+        mean: np.ndarray,
+        covariance: np.ndarray,
+        elapsed_seconds: float | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Advance a state by elapsed source time without mutating the inputs."""
+        elapsed_seconds = (
+            self.reference_interval_seconds if elapsed_seconds is None else elapsed_seconds
+        )
+        if not isfinite(elapsed_seconds) or elapsed_seconds < 0.0:
+            raise ValueError("elapsed_seconds must be finite and non-negative")
+        if elapsed_seconds == 0.0:
+            return mean.copy(), covariance.copy()
+
+        step = elapsed_seconds / self.reference_interval_seconds
+        motion = np.eye(STATE_DIM)
+        motion[:MEASUREMENT_DIM, MEASUREMENT_DIM:] = np.eye(MEASUREMENT_DIM) * step
+        noise_scale = sqrt(step)
+        std = self._std(
+            float(mean[3]),
+            position_scale=noise_scale,
+            velocity_scale=noise_scale,
+        )
+        mean = motion @ mean
+        covariance = motion @ covariance @ motion.T + np.diag(np.square(std))
         return mean, covariance
 
     def project(self, mean: np.ndarray, covariance: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

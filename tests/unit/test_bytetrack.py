@@ -19,11 +19,14 @@ coverage:
 """
 
 import numpy as np
+import pytest
 
 from surgint.model import Detections
 from surgint.runtime.bytetrack import (
     CONFIRM_HITS,
+    CONFIRMATION_SECONDS,
     ByteTrack,
+    PredictionValidity,
     Track,
     TrackState,
     associate,
@@ -322,3 +325,120 @@ def test_reset():
     for step in range(CONFIRM_HITS):
         tracked = tracker.update(frame([moved(step)]))
     assert tracked.track_ids.tolist() == [1], f"expected id 1 after reset, got {tracked.track_ids.tolist()}"
+
+
+def test_confirmation_requires_hits_and_elapsed_source_time():
+    five_fps = ByteTrack()
+    for step in range(CONFIRM_HITS):
+        tracked = five_fps.update(frame([BOX]), captured_at=step * 0.2)
+    assert tracked.track_ids.tolist() == [1]
+    assert five_fps.tracks[0].last_observed_at == pytest.approx(CONFIRMATION_SECONDS)
+
+    ten_fps = ByteTrack()
+    for step in range(CONFIRM_HITS):
+        tracked = ten_fps.update(frame([BOX]), captured_at=step * 0.1)
+    assert len(tracked.boxes) == 0, "five fast observations do not satisfy elapsed confirmation"
+
+    for step in range(CONFIRM_HITS, 9):
+        tracked = ten_fps.update(frame([BOX]), captured_at=step * 0.1)
+    assert tracked.track_ids.tolist() == [1]
+    assert ten_fps.tracks[0].hits == 9
+    assert ten_fps.tracks[0].last_observed_at == pytest.approx(CONFIRMATION_SECONDS)
+
+
+def test_loss_uses_elapsed_source_time_not_update_count():
+    tracker = ByteTrack(track_buffer=5)
+    faster_legacy_bridge = ByteTrack(track_buffer=5, nominal_interval_seconds=0.1)
+    assert faster_legacy_bridge.lost_timeout_seconds == pytest.approx(1.0)
+
+    for step in range(CONFIRM_HITS):
+        tracker.update(frame([BOX]), captured_at=step * 0.2)
+
+    tracker.update(frame(np.empty((0, 4))), captured_at=1.0)
+    assert tracker.tracks[0].state is TrackState.LOST
+    assert tracker.lost_timeout_seconds == pytest.approx(1.0)
+
+    tracker.update(frame(np.empty((0, 4))), captured_at=1.8)
+    assert len(tracker.tracks) == 1, "the track survives exactly one configured second"
+
+    tracker.update(frame(np.empty((0, 4))), captured_at=1.800001)
+    assert tracker.tracks == []
+
+
+def test_timestamped_replay_is_deterministic():
+    timestamps = [0.0, 0.2, 0.4, 0.6, 0.8, 1.15]
+
+    def replay():
+        tracker = ByteTrack()
+        outputs = []
+        for step, timestamp in enumerate(timestamps):
+            result = tracker.update(frame([moved(step)]), captured_at=timestamp)
+            outputs.append((result.boxes.copy(), result.track_ids.copy()))
+        return tracker, outputs
+
+    first, first_outputs = replay()
+    second, second_outputs = replay()
+
+    for left, right in zip(first_outputs, second_outputs):
+        assert np.array_equal(left[0], right[0])
+        assert np.array_equal(left[1], right[1])
+    assert np.array_equal(first.tracks[0].mean, second.tracks[0].mean)
+    assert np.array_equal(first.tracks[0].covariance, second.tracks[0].covariance)
+
+
+def test_display_prediction_is_non_mutating_and_reports_validity():
+    tracker = ByteTrack()
+    for step in range(CONFIRM_HITS):
+        tracker.update(frame([moved(step)]), captured_at=step * 0.2)
+
+    tracked = tracker.tracks[0]
+    before = {
+        "mean": tracked.mean.copy(),
+        "covariance": tracked.covariance.copy(),
+        "hits": tracked.hits,
+        "votes": tracked.votes.copy(),
+        "class_scores": dict(tracked.class_scores),
+        "observations": tuple(tracked.observation_timestamps),
+        "state": tracked.state,
+        "state_timestamp": tracked.state_timestamp,
+        "latest_timestamp": tracker.latest_timestamp,
+    }
+
+    prediction = tracker.display_predictions(1.0)[0]
+    repeated = tracker.display_predictions(1.0)[0]
+
+    assert prediction.track_id == 1
+    assert prediction.track_state is TrackState.CONFIRMED
+    assert prediction.state_timestamp == pytest.approx(0.8)
+    assert prediction.prediction_age == pytest.approx(0.2)
+    assert prediction.validity is PredictionValidity.VALID
+    assert prediction.valid
+    assert prediction.position_uncertainty > 0.0
+    assert np.array_equal(prediction.box, repeated.box)
+    assert not prediction.box.flags.writeable
+
+    assert np.array_equal(tracked.mean, before["mean"])
+    assert np.array_equal(tracked.covariance, before["covariance"])
+    assert tracked.hits == before["hits"]
+    assert tracked.votes == before["votes"]
+    assert tracked.class_scores == before["class_scores"]
+    assert tuple(tracked.observation_timestamps) == before["observations"]
+    assert tracked.state is before["state"]
+    assert tracked.state_timestamp == before["state_timestamp"]
+    assert tracker.latest_timestamp == before["latest_timestamp"]
+
+    stale = tracker.display_predictions(1.200001)[0]
+    assert stale.validity is PredictionValidity.TOO_OLD
+    assert not stale.valid
+
+
+def test_tracker_rejects_non_monotonic_source_time_without_mutation():
+    tracker = ByteTrack()
+    tracker.update(frame([BOX]), captured_at=1.0)
+    before = tracker.tracks[0].mean.copy()
+
+    with pytest.raises(ValueError, match="strictly advance"):
+        tracker.update(frame([BOX]), captured_at=1.0)
+
+    assert tracker.latest_timestamp == 1.0
+    assert np.array_equal(tracker.tracks[0].mean, before)
