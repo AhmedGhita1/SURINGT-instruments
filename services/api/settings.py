@@ -4,12 +4,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+DEFAULT_CHECKPOINT = Path("models") / "surgint-instruments-rt-detr"
+DEFAULT_DEVICE = "cuda"
+
+
 @dataclass(frozen=True)
 class ServingSettings:
     """configuration required to load the model."""
 
-    checkpoint: Path | None
-    device: str = "cpu"
+    checkpoint: Path | None = DEFAULT_CHECKPOINT
+    device: str = DEFAULT_DEVICE
     max_sessions: int = 8
     max_video_bytes: int = 256 * 1024 * 1024
     max_video_frames: int = 300
@@ -44,10 +48,10 @@ class ServingSettings:
 
     @classmethod
     def from_environment(cls) -> "ServingSettings":
-        checkpoint = os.getenv("SURGINT_CHECKPOINT")
+        checkpoint = os.getenv("CHECKPOINT")
         return cls(
-            checkpoint=Path(checkpoint) if checkpoint else None,
-            device=os.getenv("SURGINT_DEVICE", "cpu"),
+            checkpoint=Path(checkpoint) if checkpoint else DEFAULT_CHECKPOINT,
+            device=os.getenv("DEVICE", DEFAULT_DEVICE),
             max_sessions=int(os.getenv("SURGINT_MAX_SESSIONS", "8")),
             max_video_bytes=int(os.getenv("SURGINT_MAX_VIDEO_BYTES", str(256 * 1024 * 1024))),
             max_video_frames=int(os.getenv("SURGINT_MAX_VIDEO_FRAMES", "300")),

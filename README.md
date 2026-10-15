@@ -27,21 +27,44 @@ docker run --rm --gpus all -p 7860:7860 ghcr.io/ahmedghita1/surgint-instruments:
 Open <http://localhost:7860> after the container reports healthy.
 
 ---
+## Run from Python
+
+SURGINT Instruments supports Python 3.10–3.12. From the repository root, create an isolated
+environment and install the serving dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[serve]"
+```
+
+Download the model into its default location, then start the CUDA runtime:
+
+```bash
+hf download AhmedGhita/surgint-instruments-rt-detr \
+  --revision bf22ea635858ec05edf272c8c27c36c05bc8f7ce \
+  config.json model.safetensors manifest.yaml \
+  --local-dir models/surgint-instruments-rt-detr
+python -m uvicorn services.api.app:app --host 127.0.0.1 --port 7860
+```
+
+Then open <http://127.0.0.1:7860>.
+
+The runtime defaults to `models/surgint-instruments-rt-detr` on `cuda`. Override either value
+explicitly when needed:
+
+```bash
+CHECKPOINT=/path/to/checkpoint DEVICE=cuda:1 python -m uvicorn services.api.app:app --host 127.0.0.1 --port 7860
+```
+
 ## Development
 
-SURGINT Instruments supports Python 3.10–3.12. The `train` extra contains both training and evaluation dependencies, while `dev` includes `serve`, `train`, and the development tools. Install the complete development environment with:
+The `train` extra contains training and evaluation dependencies. The `dev` extra includes `serve`,
+`train`, and the development tools:
 
 ```bash
 python -m pip install -e ".[dev]"
 ```
-
-Run the API locally with a validated SURGINT checkpoint:
-
-```bash
-SURGINT_CHECKPOINT=/path/to/checkpoint SURGINT_DEVICE=cpu python -m uvicorn services.api.app:app --host 127.0.0.1 --port 7860
-```
-
-Then open <http://127.0.0.1:7860>.
 
 ## Training and evaluation
 

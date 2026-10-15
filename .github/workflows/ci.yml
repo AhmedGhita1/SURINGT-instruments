@@ -66,7 +66,7 @@ jobs:
           # Standard GitHub runners have no GPU. This override checks the
           # GPU-capable image's packaging and API without changing its CUDA default.
           docker run -d --name surgint-ci \
-            -e SURGINT_DEVICE=cpu \
+            -e DEVICE=cpu \
             -p 127.0.0.1:8000:7860 \
             surgint:ci
           for _ in $(seq 90); do

@@ -109,7 +109,7 @@ def create_app(
         app.state.inference_lock = Lock()
 
         if settings.checkpoint is None:
-            logger.warning("SURGINT_CHECKPOINT is not set; the API is not ready")
+            logger.warning("checkpoint loading is disabled; the API is not ready")
         else:
             try:
                 detector = detector_loader(settings.checkpoint)

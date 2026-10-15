@@ -3,8 +3,6 @@ FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime@sha256:ac7c098a81512e719afa5d
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    SURGINT_CHECKPOINT=/app/model \
-    SURGINT_DEVICE=cuda \
     SURGINT_MAX_SESSIONS=8 \
     SURGINT_MAX_VIDEO_BYTES=268435456 \
     SURGINT_MAX_VIDEO_FRAMES=300 \
@@ -39,8 +37,8 @@ FROM scratch AS ci-model
 COPY models/ci/ /model/
 
 FROM runtime AS ci
-COPY --from=ci-model --chown=surgint:surgint /model/ /app/model/
-RUN python -c "from surgint.artifacts import ModelManifest; ModelManifest.load('/app/model')"
+COPY --from=ci-model --chown=surgint:surgint /model/ /app/models/surgint-instruments-rt-detr/
+RUN python -c "from services.api.settings import DEFAULT_CHECKPOINT; from surgint.artifacts import ModelManifest; ModelManifest.load(DEFAULT_CHECKPOINT)"
 
 
 # Release models are public. The full Hub commit SHA makes this input immutable.
@@ -57,5 +55,5 @@ RUN test -n "${HF_MODEL_ID}" \
 
 
 FROM runtime AS production
-COPY --from=release-model --chown=surgint:surgint /model/ /app/model/
-RUN python -c "from surgint.artifacts import ModelManifest; ModelManifest.load('/app/model')"
+COPY --from=release-model --chown=surgint:surgint /model/ /app/models/surgint-instruments-rt-detr/
+RUN python -c "from services.api.settings import DEFAULT_CHECKPOINT; from surgint.artifacts import ModelManifest; ModelManifest.load(DEFAULT_CHECKPOINT)"
