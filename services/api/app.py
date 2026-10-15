@@ -8,13 +8,11 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 
 from services.api.schemas import (
-    DisplayPredictionResponse,
-    DisplayPredictionsResponse,
     FinalizedItemResponse,
     FinalizedSessionResponse,
     FinalizeSessionRequest,
@@ -348,57 +346,6 @@ def create_app(
             ),
             frame_count=frame_count,
             detections=response_detections,
-        )
-
-    @application.get(
-        "/v1/sessions/{session_id}/display-predictions",
-        response_model=DisplayPredictionsResponse,
-    )
-    def display_predictions(
-        session_id: UUID,
-        source_id: Annotated[str, Query(min_length=1, max_length=128)],
-        displayed_at: Annotated[float, Query(ge=0.0, allow_inf_nan=False)],
-    ) -> DisplayPredictionsResponse:
-        with application.state.sessions_lock:
-            session = application.state.sessions.get(session_id)
-        if session is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="session not found",
-            )
-
-        with session.lock:
-            try:
-                session.validate_display_timestamp(source_id, displayed_at)
-                predictions = session.pipeline.display_predictions(displayed_at)
-            except (SourceIdentityError, FrameOrderError, ValueError) as error:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=str(error),
-                ) from error
-            frame_count = session.decision_support.frame_count
-
-        labels = session.pipeline.detector.manifest.labels
-        return DisplayPredictionsResponse(
-            source_id=source_id,
-            displayed_at=displayed_at,
-            frame_count=frame_count,
-            predictions=[
-                DisplayPredictionResponse(
-                    track_id=prediction.track_id,
-                    class_id=prediction.class_id,
-                    label=labels[prediction.class_id],
-                    score=prediction.score,
-                    box=tuple(float(coordinate) for coordinate in prediction.box),
-                    track_state=prediction.track_state.value,
-                    state_timestamp=prediction.state_timestamp,
-                    prediction_age=prediction.prediction_age,
-                    position_uncertainty=prediction.position_uncertainty,
-                    validity=prediction.validity.value,
-                    valid=prediction.valid,
-                )
-                for prediction in predictions
-            ],
         )
 
     @application.post(

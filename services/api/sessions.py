@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from math import isfinite
 from threading import Lock
 
 from surgint.model.detector import Detector
@@ -78,19 +77,6 @@ class ActiveSession:
         self.source_id = identity.source_id
         self.last_sequence = identity.sequence
         self.last_captured_at = identity.captured_at
-
-    def validate_display_timestamp(self, source_id: str, displayed_at: float) -> None:
-        if not isinstance(source_id, str) or source_id != self.source_id:
-            raise SourceIdentityError(f"session source is {self.source_id!r}, not {source_id!r}")
-        if not isfinite(displayed_at) or displayed_at < 0.0:
-            raise FrameOrderError("displayed_at must be finite and non-negative")
-        if self.last_captured_at is None:
-            raise FrameOrderError("session has no accepted source frame")
-        if displayed_at < self.last_captured_at:
-            raise FrameOrderError(
-                "displayed_at cannot precede the latest source frame; "
-                f"latest={self.last_captured_at}, got={displayed_at}"
-            )
 
 
 def create_active_session(

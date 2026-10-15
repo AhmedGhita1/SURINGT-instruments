@@ -1,7 +1,6 @@
 from collections import Counter
-from dataclasses import dataclass
 from enum import Enum
-from math import isfinite, sqrt
+from math import isfinite
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -14,7 +13,6 @@ from surgint.runtime.kalman import MEASUREMENT_DIM, KalmanFilter, to_box, to_mea
 CONFIRM_HITS = 5
 CONFIRMATION_SECONDS = 0.8
 NOMINAL_INTERVAL_SECONDS = 0.2
-DISPLAY_PREDICTION_MAX_AGE_SECONDS = 0.4
 
 # threshold for the second association pass. stricter than match_thresh because low
 # scoring boxes are unreliable.
@@ -25,35 +23,6 @@ class TrackState(str, Enum):
     TENTATIVE = "tentative"
     CONFIRMED = "confirmed"
     LOST = "lost"
-
-
-class PredictionValidity(str, Enum):
-    VALID = "valid"
-    TOO_OLD = "too-old"
-    NON_FINITE = "non-finite"
-    INVALID_GEOMETRY = "invalid-geometry"
-
-
-@dataclass(frozen=True)
-class DisplayPrediction:
-    """A read-only projection for display that is not tracker evidence."""
-
-    track_id: int
-    box: np.ndarray
-    score: float
-    class_id: int
-    track_state: TrackState
-    state_timestamp: float
-    prediction_age: float
-    position_uncertainty: float
-    validity: PredictionValidity
-
-    def __post_init__(self) -> None:
-        self.box.setflags(write=False)
-
-    @property
-    def valid(self) -> bool:
-        return self.validity is PredictionValidity.VALID
 
 
 class Track:
@@ -94,7 +63,6 @@ class Track:
         self.hits = 1
         self.time_since_update = 0
         self.state = TrackState.TENTATIVE
-        self.was_confirmed = False
 
     @property
     def box(self) -> np.ndarray:
@@ -164,52 +132,12 @@ class Track:
         observed_seconds = captured_at - self.first_observed_at
         if self.hits >= CONFIRM_HITS and observed_seconds + 1e-12 >= self.confirm_after_seconds:
             self.state = TrackState.CONFIRMED
-            self.was_confirmed = True
         else:
             self.state = TrackState.TENTATIVE
 
     def mark_lost(self) -> None:
         """set the state to lost."""
         self.state = TrackState.LOST
-
-    def display_prediction(
-        self,
-        displayed_at: float,
-        max_age_seconds: float,
-    ) -> DisplayPrediction:
-        """Project to display time without changing filter or observation evidence."""
-        if not isfinite(displayed_at) or displayed_at < self.state_timestamp:
-            raise ValueError("display timestamp must be finite and not precede tracker state")
-        mean, covariance = self.kalman.predict(
-            self.mean,
-            self.covariance,
-            elapsed_seconds=displayed_at - self.state_timestamp,
-        )
-        box = np.asarray(to_box(mean[:MEASUREMENT_DIM]), dtype=np.float32)
-        age = displayed_at - self.last_observed_at
-        position_variances = np.diag(covariance)[[0, 1, 3]]
-        uncertainty = float(sqrt(max(0.0, float(position_variances.max()))))
-
-        if not np.isfinite(box).all() or not isfinite(uncertainty):
-            validity = PredictionValidity.NON_FINITE
-        elif box[2] <= box[0] or box[3] <= box[1]:
-            validity = PredictionValidity.INVALID_GEOMETRY
-        elif age > max_age_seconds:
-            validity = PredictionValidity.TOO_OLD
-        else:
-            validity = PredictionValidity.VALID
-
-        return DisplayPrediction(
-            track_id=self.track_id,
-            box=box,
-            score=self.score,
-            class_id=self.class_id,
-            track_state=self.state,
-            state_timestamp=self.last_observed_at,
-            prediction_age=age,
-            position_uncertainty=uncertainty,
-            validity=validity,
-        )
 
 
 def iou_distance(tracks: list[Track], boxes: np.ndarray) -> np.ndarray:
@@ -267,7 +195,6 @@ class ByteTrack:
         nominal_interval_seconds: float = NOMINAL_INTERVAL_SECONDS,
         confirmation_seconds: float = CONFIRMATION_SECONDS,
         lost_timeout_seconds: float | None = None,
-        display_prediction_max_age_seconds: float = DISPLAY_PREDICTION_MAX_AGE_SECONDS,
     ):
         if not isinstance(track_buffer, int) or isinstance(track_buffer, bool) or track_buffer < 0:
             raise ValueError("track_buffer must be a non-negative integer")
@@ -279,11 +206,6 @@ class ByteTrack:
             lost_timeout_seconds = track_buffer * NOMINAL_INTERVAL_SECONDS
         if not isfinite(lost_timeout_seconds) or lost_timeout_seconds < 0.0:
             raise ValueError("lost_timeout_seconds must be finite and non-negative")
-        if (
-            not isfinite(display_prediction_max_age_seconds)
-            or display_prediction_max_age_seconds < 0.0
-        ):
-            raise ValueError("display_prediction_max_age_seconds must be finite and non-negative")
         self.high_thresh = high_thresh
         self.low_thresh = low_thresh
         self.match_thresh = match_thresh
@@ -293,7 +215,6 @@ class ByteTrack:
         self.nominal_interval_seconds = nominal_interval_seconds
         self.confirmation_seconds = confirmation_seconds
         self.lost_timeout_seconds = lost_timeout_seconds
-        self.display_prediction_max_age_seconds = display_prediction_max_age_seconds
 
         self.kalman = KalmanFilter(reference_interval_seconds=nominal_interval_seconds)
         self.tracks: list[Track] = []
@@ -354,19 +275,6 @@ class ByteTrack:
         self.tracks = [track for track in self.tracks if self._alive(track, captured_at)]
         self.latest_timestamp = captured_at
         return self._detections()
-
-    def display_predictions(self, displayed_at: float) -> tuple[DisplayPrediction, ...]:
-        """Return non-mutating projections for tracks that have been confirmed."""
-        if self.latest_timestamp is None:
-            return ()
-        displayed_at = float(displayed_at)
-        if not isfinite(displayed_at) or displayed_at < self.latest_timestamp:
-            raise ValueError("display timestamp must be finite and not precede latest source time")
-        return tuple(
-            track.display_prediction(displayed_at, self.display_prediction_max_age_seconds)
-            for track in self.tracks
-            if track.was_confirmed
-        )
 
     def reset(self) -> None:
         """drop every track and reset the id counter; call between sequences or ids leak across them"""

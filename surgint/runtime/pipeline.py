@@ -11,7 +11,7 @@ from surgint.model.boxes import nms
 from surgint.model.decode import decode
 from surgint.model.detector import Detector
 from surgint.model.transform import Transform
-from surgint.runtime.bytetrack import ByteTrack, DisplayPrediction
+from surgint.runtime.bytetrack import ByteTrack
 
 
 @dataclass(frozen=True)
@@ -134,12 +134,6 @@ class Pipeline:
             total_ms=_elapsed_ms(started_at),
         )
         return results
-
-    def display_predictions(self, displayed_at: float) -> tuple[DisplayPrediction, ...]:
-        """Project confirmed tracking state without creating new observations."""
-        if self.tracker is None:
-            return ()
-        return self.tracker.display_predictions(displayed_at)
 
     def reset(self) -> None:
         """drop the tracking state. call between sequences"""

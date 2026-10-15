@@ -26,7 +26,6 @@ from surgint.runtime.bytetrack import (
     CONFIRM_HITS,
     CONFIRMATION_SECONDS,
     ByteTrack,
-    PredictionValidity,
     Track,
     TrackState,
     associate,
@@ -384,52 +383,6 @@ def test_timestamped_replay_is_deterministic():
         assert np.array_equal(left[1], right[1])
     assert np.array_equal(first.tracks[0].mean, second.tracks[0].mean)
     assert np.array_equal(first.tracks[0].covariance, second.tracks[0].covariance)
-
-
-def test_display_prediction_is_non_mutating_and_reports_validity():
-    tracker = ByteTrack()
-    for step in range(CONFIRM_HITS):
-        tracker.update(frame([moved(step)]), captured_at=step * 0.2)
-
-    tracked = tracker.tracks[0]
-    before = {
-        "mean": tracked.mean.copy(),
-        "covariance": tracked.covariance.copy(),
-        "hits": tracked.hits,
-        "votes": tracked.votes.copy(),
-        "class_scores": dict(tracked.class_scores),
-        "observations": tuple(tracked.observation_timestamps),
-        "state": tracked.state,
-        "state_timestamp": tracked.state_timestamp,
-        "latest_timestamp": tracker.latest_timestamp,
-    }
-
-    prediction = tracker.display_predictions(1.0)[0]
-    repeated = tracker.display_predictions(1.0)[0]
-
-    assert prediction.track_id == 1
-    assert prediction.track_state is TrackState.CONFIRMED
-    assert prediction.state_timestamp == pytest.approx(0.8)
-    assert prediction.prediction_age == pytest.approx(0.2)
-    assert prediction.validity is PredictionValidity.VALID
-    assert prediction.valid
-    assert prediction.position_uncertainty > 0.0
-    assert np.array_equal(prediction.box, repeated.box)
-    assert not prediction.box.flags.writeable
-
-    assert np.array_equal(tracked.mean, before["mean"])
-    assert np.array_equal(tracked.covariance, before["covariance"])
-    assert tracked.hits == before["hits"]
-    assert tracked.votes == before["votes"]
-    assert tracked.class_scores == before["class_scores"]
-    assert tuple(tracked.observation_timestamps) == before["observations"]
-    assert tracked.state is before["state"]
-    assert tracked.state_timestamp == before["state_timestamp"]
-    assert tracker.latest_timestamp == before["latest_timestamp"]
-
-    stale = tracker.display_predictions(1.200001)[0]
-    assert stale.validity is PredictionValidity.TOO_OLD
-    assert not stale.valid
 
 
 def test_tracker_rejects_non_monotonic_source_time_without_mutation():
