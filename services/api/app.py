@@ -250,7 +250,13 @@ def create_app(
         )
 
         lock_started_at = perf_counter()
-        with session.lock:
+        # one frame per session: a concurrent frame is rejected rather than queued
+        if not session.lock.acquire(blocking=False):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="session is already processing a frame",
+            )
+        try:
             if session.decision_support.is_finalized:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -297,6 +303,8 @@ def create_app(
             frame_count = session.decision_support.frame_count
             session.record_frame_identity(frame_identity)
             processing_completed_at = perf_counter()
+        finally:
+            session.lock.release()
 
         labels = session.pipeline.detector.manifest.labels
         if detections.track_ids is None:

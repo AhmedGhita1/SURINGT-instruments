@@ -1,5 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import UUID, uuid4
@@ -357,6 +359,48 @@ def test_source_sequence_state_is_isolated_between_sessions() -> None:
 
         assert application.state.sessions[session_ids[0]].pipeline.tracker.next_id == 2
         assert application.state.sessions[session_ids[1]].pipeline.tracker.next_id == 2
+
+
+def test_concurrent_frame_for_a_busy_session_is_rejected_not_queued() -> None:
+    application = create_app(
+        ServingSettings(checkpoint=Path("model")),
+        lambda _: FakeDetector(),
+    )
+
+    with TestClient(application) as client:
+        session_id = UUID(client.post("/v1/sessions").json()["session_id"])
+        session = application.state.sessions[session_id]
+        processing = Event()
+        release = Event()
+        detections = Detections(
+            boxes=np.zeros((0, 4), dtype=np.float32),
+            scores=np.zeros(0, dtype=np.float32),
+            class_ids=np.zeros(0, dtype=np.int64),
+            track_ids=np.zeros(0, dtype=np.int64),
+        )
+
+        def slow_predict(*_args, **_kwargs):
+            processing.set()
+            release.wait(5)
+            return detections
+
+        session.pipeline.predict = Mock(side_effect=slow_predict)
+        url = f"/v1/sessions/{session_id}/frames"
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            first = pool.submit(
+                client.post, url, files={"image": ("frame.png", image_bytes(), "image/png")}
+            )
+            assert processing.wait(5)
+            second = client.post(url, files={"image": ("frame.png", image_bytes(), "image/png")})
+            release.set()
+            first = first.result(timeout=5)
+
+        assert first.status_code == 200
+        assert second.status_code == 429
+        assert second.json()["detail"] == "session is already processing a frame"
+        assert session.pipeline.predict.call_count == 1
+        assert session.decision_support.frame_count == 1
+        assert not session.lock.locked()
 
 
 def test_display_predictions_do_not_mutate_evidence_inventory_or_decisions() -> None:

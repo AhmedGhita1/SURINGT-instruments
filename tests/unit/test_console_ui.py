@@ -216,7 +216,7 @@ def test_loop_keeps_one_request_in_flight() -> None:
     )[0]
 
     assert "let inFlight = null" in loop
-    assert "inFlight = framePromise.then(postFrame).then(acceptResult)" in loop
+    assert "inFlight = framePromise.then(postFrame).then(function (completed) {" in loop
     assert "inFlight = null" in loop
     skip = "if (inFlight && live) {"
     assert skip in select
@@ -313,3 +313,19 @@ def test_native_video_plays_under_a_box_overlay_redrawn_per_result() -> None:
     assert on_frame.count("draw(") == 1
     finish = source_between("function finishCapture", "async function discardCurrentSession")
     assert finish.index("draw(source, visibleDetections(), true)") < finish.index("releaseMedia()")
+
+
+def test_busy_session_rejection_counts_as_a_skipped_selection() -> None:
+    post = source_between("async function postFrame", "function draw(")
+    loop = source_between("async function runAnalysis", "function finishCapture")
+    analyze = loop.split("const analyze = function (framePromise) {", 1)[1].split(
+        "const select", 1
+    )[0]
+
+    busy = "if (response.status === 429) {"
+    assert busy in post
+    assert post.index(busy) < post.index("if (!response.ok) {")
+    assert "return null;" in post
+    assert "if (completed) {" in analyze
+    assert "} else if (isCurrent()) {" in analyze
+    assert "analysisTiming.skipped_selections += 1" in analyze

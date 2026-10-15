@@ -921,6 +921,10 @@ async function postFrame(frame) {
     method: "POST",
     body: body,
   });
+  // the session is still processing an earlier frame; the caller counts this as a skip
+  if (response.status === 429) {
+    return null;
+  }
   if (!response.ok) {
     throw new Error("The scanner rejected a frame (" + response.status + ").");
   }
@@ -1105,7 +1109,13 @@ async function runAnalysis(video) {
   };
 
   const analyze = function (framePromise) {
-    inFlight = framePromise.then(postFrame).then(acceptResult).catch(function (error) {
+    inFlight = framePromise.then(postFrame).then(function (completed) {
+      if (completed) {
+        acceptResult(completed);
+      } else if (isCurrent()) {
+        analysisTiming.skipped_selections += 1;
+      }
+    }).catch(function (error) {
       if (isCurrent()) {
         void failCapture(error);
       }
