@@ -7,6 +7,8 @@ outputs/
 /outputs
 docs-drafts/
 .agents/
+/AGENTS.md
+/CLAUDE.md
 .claude/
 .vscode/
 archive/
