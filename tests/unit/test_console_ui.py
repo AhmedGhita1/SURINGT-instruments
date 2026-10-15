@@ -293,3 +293,23 @@ def test_recorded_video_reports_a_file_that_stops_decoding() -> None:
 
     assert "showAlert(" in handler
     assert "formatElapsed(video.currentTime)" in handler
+
+
+def test_native_video_plays_under_a_box_overlay_redrawn_per_result() -> None:
+    source = console_source()
+    loop = source_between("async function runAnalysis", "function finishCapture")
+    accept = source_between("function acceptResult", "function setState")
+    draw = source_between("function draw(video, detections, withFrame)", "function humanize")
+
+    assert ".stage video, .stage canvas {" in source
+    assert "object-fit: contain" in source
+    assert "canvas.before(video)" in source
+    assert "source.remove()" in source
+    assert "context.clearRect(0, 0, canvas.width, canvas.height)" in draw
+    assert "if (withFrame) {" in draw
+    assert "draw(source, visibleDetections())" in accept
+    on_frame = loop.split("const onFrame = function (now, metadata) {", 1)[1]
+    assert "if (showResultsDelayed(age > MAX_OVERLAY_AGE_SECONDS)) {" in on_frame
+    assert on_frame.count("draw(") == 1
+    finish = source_between("function finishCapture", "async function discardCurrentSession")
+    assert finish.index("draw(source, visibleDetections(), true)") < finish.index("releaseMedia()")

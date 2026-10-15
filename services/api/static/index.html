@@ -159,7 +159,8 @@
     justify-content: center;
     overflow: hidden;
   }
-  canvas { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; }
+  .stage video, .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  .stage canvas { pointer-events: none; }
 
   .empty-stage {
     position: absolute;
@@ -743,10 +744,11 @@ function visibleDetections() {
 
 function showResultsDelayed(delayed) {
   if (elements.liveStatus.classList.contains("delayed") === delayed) {
-    return;
+    return false;
   }
   elements.liveStatus.classList.toggle("delayed", delayed);
   elements.liveStatus.textContent = delayed ? "Results delayed" : "Scanning";
+  return true;
 }
 
 function acceptResult(completed) {
@@ -758,6 +760,7 @@ function acceptResult(completed) {
   frames = result.frame_count;
   latestCapturedAt = result.frame.captured_at;
   updateDetections(result.detections);
+  draw(source, visibleDetections());
   elements.finishCapture.disabled = false;
   analysisTiming.samples.push({
     mode: mediaKind,
@@ -933,12 +936,17 @@ async function postFrame(frame) {
   };
 }
 
-function draw(video, detections) {
+// The overlay canvas uses source pixels and the same object-fit as the video, so boxes stay
+// aligned at any displayed size. withFrame also paints the current frame, to keep it after stop.
+function draw(video, detections, withFrame) {
   if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
   }
-  context.drawImage(video, 0, 0);
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  if (withFrame) {
+    context.drawImage(video, 0, 0);
+  }
   if (!overlaysEnabled) {
     return;
   }
@@ -1014,6 +1022,7 @@ function resetSessionData() {
   sourceSequence = 0;
   resetAnalysisTiming();
   showResultsDelayed(false);
+  context.clearRect(0, 0, canvas.width, canvas.height);
   elements.objectCount.textContent = "0";
   elements.elapsed.textContent = "00:00";
   elements.finishCapture.disabled = true;
@@ -1035,6 +1044,7 @@ function releaseMedia() {
   if (source) {
     source.pause();
     source.srcObject = null;
+    source.remove();
     source = null;
   }
   if (sourceUrl) {
@@ -1059,6 +1069,7 @@ async function startCapture(video, kind) {
   resetSessionData();
   mediaKind = kind;
   source = video;
+  canvas.before(video);
   setInitialBusy(true);
   try {
     session = await createSession();
@@ -1144,12 +1155,13 @@ async function runAnalysis(video) {
       return;
     }
     const age = overlayAgeSeconds();
-    showResultsDelayed(age > MAX_OVERLAY_AGE_SECONDS);
+    if (showResultsDelayed(age > MAX_OVERLAY_AGE_SECONDS)) {
+      draw(video, visibleDetections());
+    }
     if (age > MAX_OVERLAY_AGE_SECONDS) {
       analysisTiming.stale_overlay_frames += 1;
     }
     analysisTiming.max_overlay_age_ms = Math.max(analysisTiming.max_overlay_age_ms, age * 1000);
-    draw(video, visibleDetections());
     updateElapsed();
 
     selectIfDue(live ? now / 1000 : metadata.mediaTime);
@@ -1196,6 +1208,7 @@ function finishCapture() {
     }
     return;
   }
+  draw(source, visibleDetections(), true);
   releaseMedia();
   const typeCount = seenClasses.size;
   elements.reviewItemTypes.textContent = typeCount + " item type" + (typeCount === 1 ? "" : "s") + " detected";
@@ -1211,7 +1224,6 @@ async function discardCurrentSession(askForConfirmation) {
   await deleteSession();
   resetSessionData();
   setInitialBusy(false);
-  context.clearRect(0, 0, canvas.width, canvas.height);
   setState("initial");
 }
 
@@ -1536,7 +1548,6 @@ elements.contextForm.addEventListener("submit", function (event) {
 
 elements.newScan.addEventListener("click", function () {
   resetSessionData();
-  context.clearRect(0, 0, canvas.width, canvas.height);
   setInitialBusy(false);
   setState("initial");
 });

@@ -29,6 +29,7 @@ The camera uses a latest-frame scheduler with an overwrite slot, generation chec
 - **affected:** `services/api/static/index.html`, `tests/unit/test_console_ui.py`.
 - **verification:** the 4K Magdeburg file plays with almost no dropped frames, and two runs analyze identical timestamps. Boxes align with objects at 4K and 720p. Capture, review, and finalize states look unchanged.
 - **commit:** `perf: draw overlays over native video playback`
+- **implementation notes:** at 4K and 60 fps, Chrome's frame callback skips some displayed frames, so about 5% of selections land one frame late and two runs can differ in analyzed frames and final inventory. 1080p at 60 fps and 4K at 30 fps stayed identical, and the user accepted this checkpoint with the 4K 60 fps limit open for the architect.
 
 ### B.3 one frame per session on the server
 
