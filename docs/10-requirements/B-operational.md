@@ -6,7 +6,7 @@
 
 | id | requirement |
 |---|---|
-| OR-001 | the robot workflow shall support deployment on the selected robot edge hardware, while the tray workflow shall support deployment on the selected cloud GPU environment. |
+| OR-001 | the robot workflow shall support deployment on the selected robot edge hardware, while the tray workflow shall support deployment on a Hugging Face Space GPU or a local workstation GPU. |
 | OR-002 | each deployment shall use a compatible, versioned set of application code, model artifacts, instrument knowledge, handling policy, schemas, and configuration. |
 | OR-003 | the runtime shall validate required configuration, artifact compatibility, and input availability before accepting a run or session. |
 | OR-004 | builds and deployments used for acceptance shall be reproducible from version-controlled definitions and declared artifact versions. |

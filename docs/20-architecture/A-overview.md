@@ -85,7 +85,7 @@ the tray coordinator collects live or recorded observations while showing synchr
 | profile | runtime location | interaction | output timing |
 |---|---|---|---|
 | robot edge | selected robot edge hardware | local robot-operator interface | per resolved item during the run |
-| tray service | selected cloud GPU environment | browser interface backed by an API | perception during capture; inventory and decisions after finalization |
+| tray service | Hugging Face Space GPU or local workstation GPU | browser interface backed by an API | perception during capture; inventory and decisions after finalization |
 
 both profiles use the same core contracts and versioned artifacts. Packaging and performance tuning may differ by profile.
 

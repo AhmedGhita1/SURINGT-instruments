@@ -12,7 +12,7 @@ flowchart LR
     candidate --> gate{evaluation and promotion gate}
     gate -->|fail| analysis[failure analysis]
     gate -->|pass| release[versioned release set]
-    release --> deployment[edge or cloud deployment]
+    release --> deployment[robot-edge or tray-service deployment]
     deployment --> evidence[runtime evidence]
     analysis -->|reviewed feedback| future[future dataset version]
     evidence -->|reviewed feedback| future
