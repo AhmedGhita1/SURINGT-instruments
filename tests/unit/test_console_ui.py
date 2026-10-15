@@ -387,3 +387,11 @@ def test_recorded_video_keeps_its_existing_sequential_scheduler() -> None:
     assert "const completed = await postFrame(video)" in video
     assert "liveScheduler" not in video
     assert "pending" not in video
+
+
+def test_recorded_video_reports_a_file_that_stops_decoding() -> None:
+    video = source_between("async function runVideo", "async function finishCapture")
+    handler = video.split('video.addEventListener("error"', 1)[1]
+
+    assert "showAlert(" in handler
+    assert "formatElapsed(video.currentTime)" in handler

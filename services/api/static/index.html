@@ -1712,6 +1712,17 @@ async function runVideo(video) {
     finishWhenReady();
   }, { once: true });
 
+  // a truncated or damaged file stops decoding without ever reaching "ended"
+  video.addEventListener("error", function () {
+    if (running) {
+      showAlert(
+        "The video stopped at " + formatElapsed(video.currentTime)
+        + " because the rest of the file could not be decoded. "
+        + "Finish to review what was scanned, or discard the scan."
+      );
+    }
+  }, { once: true });
+
   if (!video.requestVideoFrameCallback) {
     throw new Error("This browser does not support recorded-video scanning. Try a current browser.");
   }
