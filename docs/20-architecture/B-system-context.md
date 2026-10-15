@@ -41,7 +41,7 @@ flowchart LR
 | recorded video | supplies a bounded tray input with source timing and format metadata. |
 | robot system | performs motion and actuation under its own operational and safety controls. It does not receive execution commands from SURGINT. |
 | artifact source | supplies approved model, instrument-knowledge, policy, schema, and configuration versions. |
-| deployment platform | provides compute, storage needed by the active run, networking, and process supervision for the edge or cloud profile. |
+| deployment platform | provides compute, storage needed by the active run, networking, and process supervision for the robot-edge or tray-service profile. |
 | telemetry service | optionally receives non-blocking operational metrics without raw media, credentials, or identifying information. |
 
 ## C. system boundary
@@ -57,6 +57,6 @@ outside SURGINT are robot actuation, motion planning, motion safety, clinical de
 | media input | validate type, size, decode behavior, ordering, and configured limits before or during processing. |
 | operator input | validate workflow transitions, context values, and item overrides before they affect results. |
 | artifact loading | verify schema compatibility, required metadata, version identity, and integrity before a workflow starts. |
-| edge or cloud process boundary | expose only the interfaces required by the active deployment profile and keep workflow state isolated. |
+| robot-edge or tray-service process boundary | expose only the interfaces required by the active deployment profile and keep workflow state isolated. |
 | public network boundary | add authentication, encrypted transport, request limits, and session controls before access by untrusted clients. |
 | telemetry boundary | send operational metadata only and keep primary workflow success independent of telemetry delivery. |

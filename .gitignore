@@ -16,3 +16,7 @@ notebooks/
 models/
 temp/
 wandb/
+
+build/
+AGENTS.md
+CLAUDE.md

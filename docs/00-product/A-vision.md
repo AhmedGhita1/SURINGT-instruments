@@ -1,37 +1,70 @@
 # product vision
 
-SURGINT Instruments is a stateful, real-time perception and decision-support system for surgical-instrument processing. It observes instruments, builds an inventory, and connects resolved surgical instruments to handling/procedure decisions.
+## A. executive summary and vision statement
 
-## A. purpose
+### A.1 vision statement
 
-The project demonstrates end-to-end AI systems engineering across data, models, real-time inference, runtime state, APIs, deployment, and evaluation. Product claims must remain measurable and suitable for a credible engineering demonstration.
+Surgical-instrument processing depends on maintaining a clear chain of accountability for every item. When an instrument is missed, misidentified, counted more than once, or disconnected from the appropriate handling procedure, teams face reconciliation work, workflow disruption, and avoidable safety risk. SURGINT Instruments is a visual workflow assistant that strengthens this chain by maintaining a traceable inventory, providing standardized handling guidance, and directing uncertain cases to human review.
 
-## B. product problem
+### A.2 strategic goal
 
-Instrument processing requires more than frame-level recognition. A useful system must preserve physical identity, avoid duplicate inventory entries, resolve each item at the correct time, communicate uncertainty, and keep perception separate from handling decisions.
+The strategic goal is to establish a trustworthy digital backbone for surgical-instrument processing. By bringing instrument identification, inventory, and handling guidance into one coherent and traceable workflow, SURGINT Instruments strengthens instrument accountability, reduces manual reconciliation, and creates the basis for dependable automation under human oversight.
 
-## C. supported workflows
+## B. problem space and opportunity
 
-### C.1 continuous robot operation
+### B.1 core operational problem
 
-This is the primary workflow. A robot processes a continuous video stream and handles instruments sequentially, usually one item at a time. SURGINT provides immediate perception and handling outputs for each resolved physical item, updates the inventory incrementally, and keeps the current state available to the supervising operator.
+Surgical-instrument processing is a continuous accountability task, not a sequence of isolated identifications. Teams must preserve an accurate understanding of each item as instruments enter the workflow, change position, disappear from view, and reappear. When identification, counting, and handling guidance are managed as separate activities, that understanding becomes difficult to maintain and unresolved uncertainty is pushed onto the operator.
 
+### B.2 consequence of the current gap
 
-### C.2 instrument-tray inventory
+When instrument accountability breaks down, teams must pause to reconcile counts, confirm identities, and recover missing handling information. This increases workload, delays processing, weakens traceability, and can allow misidentified or incorrectly routed instruments to progress through the workflow. The same uncertainty prevents automated workflows from using results dependably and forces operators to verify information that should already be coherent.
 
-This is the secondary workflow. An operator opens a live stream or recorded video, observes synchronized detections and tracks, confirms context, then receives a finalized inventory, handling decision outcomes, and exportable report.
+### B.3 opportunity
 
-## D. users and consumers
+The opportunity is to make instrument accountability continuous and reviewable throughout processing. A shared operational record of what has been identified, what has been counted, which handling guidance applies, and what remains uncertain can reduce reconciliation and support more dependable automation. SURGINT Instruments addresses this opportunity while preserving human oversight and directing unresolved cases to explicit review.
 
-- The robot operator receives per-item perception and handling results.
-- The robot operator supervises the run and inventory.
-- The tray operator or evaluator captures, finalizes, and reviews a tray session.
-- Researchers and engineers evaluate system quality and limitations.
+## C. target audience and ecosystem stakeholders
 
-## E. product boundary
+### C.1 primary users
 
-SURGINT Instruments is a research prototype. It is not clinically validated and must not be used for patient care, clinical decisions, sterility assessment, autonomous safety decisions, or safety-critical instrument accounting.
+Robot operators and instrument-tray operators supervise processing runs or capture and finalize tray inventories. They need clear access to workflow state, resolved items, inventory, supported handling outcomes, failures, and items requiring review without having to interpret model or policy internals.
 
-## F. success
+### C.2 secondary stakeholders
 
-Success means each workflow produces the right output at the right time, unresolved items require review, results are traceable to evidence and policy, and measured limitations are stated as clearly as capabilities.
+Operational supervisors and evaluators review inventory results, handling outcomes, exceptions, and supporting evidence. Integrated instrument-processing workflows consume timely, structured results while retaining independent operational and safety controls.
+
+### C.3 technical stakeholders
+
+Engineering and research teams require reproducible artifacts, stable interfaces, measurable quality, traceable results, and explicit operating limits so they can evaluate and integrate SURGINT Instruments without relying on undocumented model behavior.
+
+The commercial buyer, deployment owner, and regulatory pathway have not yet been established and are not assumed by this prototype.
+
+## D. strategic pillars
+
+### D.1 persistent physical-item state
+
+The product maintains instrument identity and workflow state across repeated observations. A supported physical item is accounted for once even when it appears, moves, leaves view, or reappears.
+
+### D.2 traceable handling outcomes
+
+Instrument observations produce operational value only when connected to validated knowledge, workflow context, and explicit handling policy. Each supported outcome must remain traceable to the evidence, context, model, knowledge, and policy versions that produced it.
+
+### D.3 bounded and reviewable automation
+
+Automation remains limited to demonstrated operating conditions. Unsupported instruments, insufficient evidence, missing information, incompatible policy, and degraded operation produce an explicit review or failure state rather than an unjustified result.
+
+## E. non-goals and boundaries
+
+- **No clinical decision-making:** SURGINT Instruments does not diagnose, recommend patient treatment, or replace accountable clinical judgment.
+- **No visual claims of sterility or safety:** Appearance alone is not used to declare an instrument sterile, uncontaminated, safe, or suitable for use.
+- **No invented handling outcomes:** Uncertainty, missing context, unsupported items, and absent policy remain visible and do not become recommendations.
+- **No replacement for operational safety controls:** SURGINT Instruments supplies instrument understanding and handling outcomes; it does not replace the independent controls required to execute physical operations safely.
+- **No safety-critical accounting claim at the prototype stage:** Current inventories and decisions are research outputs until their intended operating conditions have been independently validated.
+- **No general hospital or asset-management platform:** The product remains focused on visual understanding, state, and handling support for surgical-instrument processing.
+
+## F. current stage and success criteria
+
+SURGINT Instruments is a product-direction research prototype. Its current purpose is to validate the product assumptions, system boundaries, evidence, and operating profiles required to progress toward an operational product. It is not clinically validated and must not be used for patient care, autonomous safety decisions, or safety-critical instrument accounting.
+
+Product success means that, under declared and independently validated operating conditions, an instrument-processing workflow can use SURGINT Instruments to maintain dependable physical-item identity, inventory, and supported handling procedures; stop or request review when those conditions are not met; and trace every result to the evidence and versioned artifacts that produced it.
