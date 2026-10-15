@@ -25,7 +25,7 @@ live and recorded video both show live overlays from one simple analysis loop. L
 
 ### B.2 RTI-02: one analysis loop
 
-**definition:** Selects frames by source time and keeps at most one analysis request in flight, for live and recorded video alike.
+**definition:** Selects frames by source time and keeps at most one analysis request in flight, for live and recorded video alike. The rule is workflow-neutral: the tray page implements it here, and the robot coordinator implements it in the robot workflow package.
 
 **specification:**
 
@@ -33,8 +33,10 @@ live and recorded video both show live overlays from one simple analysis loop. L
 - Keep at most one analysis request in flight and never queue frames.
 - When a selection is due while a request is in flight, live video skips it and recorded video pauses playback until the result returns.
 - Completed results shall enter tracking in capture order.
+- The frame endpoint rejects a frame with HTTP 429 when its session already has a frame processing. Clients treat the rejection as a skipped selection.
+- Clients ignore a result whose source does not match the current source or that arrives after the run stopped.
 
-**verification:** Browser runs show no overlapping requests, counted skipped selections for live video, and analyzed timestamps on the source-time grid for recorded video.
+**verification:** Browser runs show no overlapping requests, counted skipped selections for live video, and analyzed timestamps on the source-time grid for recorded video. An API test shows a concurrent frame for the same session is rejected, and a browser run shows a late result after discard does not change the new scan.
 
 ### B.3 RTI-03: timestamp-aware tracking
 
@@ -65,9 +67,8 @@ live and recorded video both show live overlays from one simple analysis loop. L
 
 **specification:**
 
-- Hide live overlays when the latest result is older than the approved age limit, measured from capture time, and show that results are delayed.
+- Hide live overlays when the latest result is older than 0.4 seconds, measured from capture time, and show that results are delayed.
 - Restore overlays when a fresh result arrives.
-- The initial age limit stays 0.4 seconds until the evaluation profile chooses one.
 
 **verification:** A delayed-server scenario hides overlays, shows the delayed state, and recovers.
 
@@ -89,9 +90,10 @@ live and recorded video both show live overlays from one simple analysis loop. L
 
 **specification:**
 
-- Measure on the local workstation GPU, and record the Hugging Face Space profile separately.
+- Acceptance profile: the local workstation GPU and one session, with a 720p fake camera, the 1080p synthetic demo, and the first 30 seconds of a 4K Magdeburg recording.
+- Targets at 720p and 1080p: at least 5 analyses per second, p95 capture-to-result latency of at most 200 ms, live overlay age of at most 0.4 seconds, and no queued frames. 4K results are reported without a target.
+- The Hugging Face Space profile is measured and reported without a target. The robot edge profile is measured in the robot workflow package once its hardware is selected.
 - Record effective analysis rate, p50 and p95 capture-to-result latency, overlay age, skipped selections, paused playback time, identity switches, confirmation delay, and inventory accuracy.
-- Choose the overlay age limit from these measurements.
 
 **verification:** A versioned report identifies the hardware, model, sources, configuration, metrics, limits, and pass or fail result.
 
@@ -109,8 +111,9 @@ live and recorded video both show live overlays from one simple analysis loop. L
 - frame and result identity remains correct across capture, inference, tracking, delivery, and display.
 - tracking uses elapsed time and remains deterministic for the same timestamped sequence.
 - two runs of the same recorded file analyze identical frames and produce the same final inventory.
-- live overlays older than the approved age limit are hidden and the delayed state is visible.
-- the evaluation report meets its rate, freshness, tracking, and inventory limits on the local workstation GPU.
+- the frame endpoint never processes or queues more than one frame per session.
+- live overlays older than 0.4 seconds are hidden and the delayed state is visible.
+- the evaluation report meets the RTI-07 targets on the local workstation GPU.
 - existing tray finalization and decision behavior remains unchanged.
 
 ## E. non-goals
