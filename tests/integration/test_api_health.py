@@ -65,9 +65,9 @@ def test_console_is_served_from_the_package() -> None:
         assert 'data-view="final"' in response.text
         assert 'get("__sign")' in response.text
         assert 'fetch(apiUrl("/v1/sessions")' in response.text
-        assert "INFERENCE_FRAME_STRIDE = 5" in response.text
-        assert "requestVideoFrameCallback(showFrame)" in response.text
-        assert "presentedFrames - lastInferenceFrame" in response.text
+        assert "ANALYSIS_INTERVAL_SECONDS = 0.2" in response.text
+        assert "requestVideoFrameCallback(onFrame)" in response.text
+        assert "await runAnalysis(video)" in response.text
         assert "Research demonstration only. Not for clinical decisions." not in response.text
         assert "frames processed" not in response.text.lower()
         assert "objects in view" in response.text
