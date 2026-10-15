@@ -299,6 +299,8 @@
     animation: pulse 1.8s infinite;
   }
   @keyframes pulse { 50% { box-shadow: 0 0 0 10px rgb(66 216 141 / 0); } }
+  .live-status.delayed { color: var(--warning); }
+  .live-status.delayed::before { background: var(--warning); box-shadow: none; animation: none; }
   .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .metric { min-height: 112px; padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
   .metric-value { display: block; font-size: clamp(34px, 4vw, 48px); font-weight: 720; line-height: 1; }
@@ -507,7 +509,7 @@
 
       <section class="view" data-view="live" hidden>
         <h2 tabindex="-1">Live scan</h2>
-        <div class="live-status" role="status">Scanning</div>
+        <div class="live-status" id="live-status" role="status">Scanning</div>
         <div class="metrics" aria-label="Live scan summary">
           <div class="metric">
             <strong class="metric-value" id="object-count">0</strong>
@@ -605,15 +607,11 @@ const CLASS_COLORS = [
   "#d4e157", "#26c6da", "#ffa726", "#7e57c2", "#7cb342", "#ec407a",
 ];
 
-const INFERENCE_FRAME_STRIDE = 5;
-const LIVE_DETECTOR_FPS = 5;
-const LIVE_MAX_OVERLAY_AGE_SECONDS = 0.4;
+const ANALYSIS_INTERVAL_SECONDS = 0.2;
+const MAX_OVERLAY_AGE_SECONDS = 0.4;
+// a presented frame within this distance of a grid time counts as on the grid
+const GRID_TOLERANCE_SECONDS = 0.001;
 const MAX_TIMING_SAMPLES = 1000;
-
-window.surgintLiveConfig = {
-  detector_fps: LIVE_DETECTOR_FPS,
-  max_overlay_age_seconds: LIVE_MAX_OVERLAY_AGE_SECONDS,
-};
 
 const ACTION_PRESENTATION = {
   "secure-transport-to-reprocessing": { key: "secure", title: "Secure for reprocessing", icon: "S" },
@@ -650,6 +648,7 @@ const elements = {
   camera: document.getElementById("camera"),
   openVideo: document.getElementById("open-video"),
   file: document.getElementById("file"),
+  liveStatus: document.getElementById("live-status"),
   objectCount: document.getElementById("object-count"),
   elapsed: document.getElementById("elapsed"),
   detectedList: document.getElementById("detected-list"),
@@ -683,81 +682,26 @@ let running = false;
 let frames = 0;
 let mediaKind = null;
 let videoFrameCallback = null;
-let animationFrameCallback = null;
 let sessionStartedAt = null;
 let elapsedTimer = null;
 let latestDetections = [];
+let latestCapturedAt = null;
 let seenClasses = new Map();
 let overlaysEnabled = true;
 let finalizedResult = null;
 let finalizedAt = null;
-let latestResultTiming = null;
 let sourceIdentity = null;
 let sourceSequence = 0;
-let liveGeneration = 0;
-let liveScheduler = null;
-let stopLiveCapture = null;
-let displayPredictionRequest = null;
-let latestAcceptedFrame = null;
-let latestDisplayPredictions = [];
-let latestDisplayTimestamp = null;
-let latestPredictionTimestamp = null;
-const timingSamples = [];
-const schedulerTiming = {
-  // A selection opportunity is a due live-source clock tick. A selected frame completed
-  // admission capture; a capture-busy drop did not create a frame or sequence identity.
-  selection_opportunities: 0,
-  selected: 0,
-  // Capture-busy drops are due ticks skipped before identity creation. Capture errors are
-  // attempted selections whose JPEG snapshot failed and stop the active capture.
-  capture_busy_drops: 0,
-  capture_errors: 0,
-  // Admitted frames started a detector request. A busy observation was offered while one
-  // request was active. Overwritten frames were pending frames replaced by a newer one.
-  admitted: 0,
-  busy_source_frames: 0,
-  overwritten: 0,
-  // Shutdown drops are pending or just-encoded frames discarded on stop. Dropped is the sum of
-  // capture-busy, overwritten, and shutdown drops; request failures are counted separately.
-  shutdown_drops: 0,
-  dropped: 0,
-  // Completed requests returned a parsed success response. Each current-generation completion
-  // is either accepted after correlation or suppressed. Errors and client aborts are separate.
-  completed: 0,
-  accepted_results: 0,
-  suppressed_results: 0,
-  request_errors: 0,
-  aborted_requests: 0,
-  // Capacity gauges are current detector-request state; max_pending must never exceed one.
-  in_flight: 0,
-  pending: 0,
-  max_pending: 0,
-  // Display prediction GETs are separately bounded to one active request. A prediction
-  // response can be suppressed as a whole; individual prediction records can be rejected.
-  prediction_requests: 0,
-  prediction_completed: 0,
-  prediction_accepted: 0,
-  prediction_suppressed: 0,
-  prediction_errors: 0,
-  prediction_aborted: 0,
-  // Invalid predictions are individual records rejected on receipt. Stale overlay frames are
-  // display ticks that age out stored records; rendered frames contain an enabled valid overlay.
-  invalid_predictions: 0,
+// timing summary for measurement: one sample per accepted result plus loop counters
+const analysisTiming = {
+  samples: [],
+  selections: 0,
+  skipped_selections: 0,
+  paused_ms: 0,
   stale_overlay_frames: 0,
-  rendered_overlay_frames: 0,
-  last_result_suppression: null,
-  last_prediction_suppression: null,
+  max_overlay_age_ms: 0,
 };
-
-window.surgintTiming = {
-  samples: timingSamples,
-  scheduler: schedulerTiming,
-  snapshot: function () { return timingSamples.map(function (sample) { return { ...sample }; }); },
-  schedulerSnapshot: function () { return { ...schedulerTiming }; },
-  liveState: function () {
-    return liveScheduler ? liveScheduler.snapshot() : { accepting: false, in_flight: false, pending: false };
-  },
-};
+window.surgintTiming = analysisTiming;
 
 const hfSign = new URLSearchParams(window.location.search).get("__sign");
 
@@ -781,369 +725,52 @@ function parseServerTiming(value) {
   return timings;
 }
 
-function recordDisplayTiming(timing) {
-  if (!timing) {
-    return;
-  }
-  const sample = {
-    mode: mediaKind,
-    capture_ms: timing.capture_ms,
-    request_ms: timing.request_ms,
-    response_body_ms: timing.response_body_ms,
-    display_age_ms: performance.now() - timing.capture_started_at,
-    first_display: timing.display_count === 0,
-    server: timing.server,
-  };
-  timing.display_count += 1;
-  timingSamples.push(sample);
-  if (timingSamples.length > MAX_TIMING_SAMPLES) {
-    timingSamples.shift();
-  }
-}
-
-function resetSchedulerTiming() {
-  Object.keys(schedulerTiming).forEach(function (key) {
-    schedulerTiming[key] = key.startsWith("last_") ? null : 0;
+function resetAnalysisTiming() {
+  Object.keys(analysisTiming).forEach(function (key) {
+    analysisTiming[key] = key === "samples" ? [] : 0;
   });
 }
 
-function configuredLiveDetectorFps() {
-  const value = Number(window.surgintLiveConfig.detector_fps);
-  return Number.isFinite(value) && value > 0 ? value : LIVE_DETECTOR_FPS;
+function overlayAgeSeconds() {
+  return mediaKind === "camera" && latestCapturedAt !== null
+    ? performance.now() / 1000 - latestCapturedAt
+    : 0;
 }
 
-function configuredOverlayAgeSeconds() {
-  const value = Number(window.surgintLiveConfig.max_overlay_age_seconds);
-  return Number.isFinite(value) && value >= 0 ? value : LIVE_MAX_OVERLAY_AGE_SECONDS;
+function visibleDetections() {
+  return overlayAgeSeconds() <= MAX_OVERLAY_AGE_SECONDS ? latestDetections : [];
 }
 
-function liveGenerationMatches(generation, expectedSession, expectedSource) {
-  return generation === liveGeneration
-    && session === expectedSession
-    && sourceIdentity === expectedSource
-    && mediaKind === "camera";
+function showResultsDelayed(delayed) {
+  if (elements.liveStatus.classList.contains("delayed") === delayed) {
+    return;
+  }
+  elements.liveStatus.classList.toggle("delayed", delayed);
+  elements.liveStatus.textContent = delayed ? "Results delayed" : "Scanning";
 }
 
-function detectorResultSuppressionReason(frame, result, generation) {
-  if (!liveGenerationMatches(generation, frame.session_id, frame.source_id)) {
-    return "wrong-session";
-  }
-  if (!result || result.schema_version !== "1.1" || !result.frame) {
-    return "malformed-result";
-  }
-  if (result.frame.source_id !== frame.source_id) {
-    return "wrong-source";
-  }
-  if (result.frame.metadata_origin !== "client") {
-    return "wrong-metadata-origin";
-  }
-  if (
-    result.frame.sequence !== frame.sequence
-    || result.frame.captured_at !== frame.captured_at
-    || result.frame.source_width !== frame.source_width
-    || result.frame.source_height !== frame.source_height
-  ) {
-    return "mismatched-frame";
-  }
-  if (latestAcceptedFrame && result.frame.sequence <= latestAcceptedFrame.sequence) {
-    return "out-of-order-result";
-  }
-  if (!Number.isInteger(result.frame_count) || result.frame_count < 0 || !Array.isArray(result.detections)) {
-    return "malformed-result";
-  }
-  return null;
-}
-
-function acceptLiveDetectorResult(frame, completed, generation) {
-  const reason = detectorResultSuppressionReason(frame, completed.result, generation);
-  if (reason) {
-    schedulerTiming.suppressed_results += 1;
-    schedulerTiming.last_result_suppression = reason;
-    return false;
-  }
+function acceptResult(completed) {
   const result = completed.result;
-  latestAcceptedFrame = Object.freeze({
-    source_id: result.frame.source_id,
+  // a result from an earlier source, or one that arrives after the run stopped, changes nothing
+  if (!running || result.frame.source_id !== sourceIdentity) {
+    return;
+  }
+  frames = result.frame_count;
+  latestCapturedAt = result.frame.captured_at;
+  updateDetections(result.detections);
+  elements.finishCapture.disabled = false;
+  analysisTiming.samples.push({
+    mode: mediaKind,
     sequence: result.frame.sequence,
     captured_at: result.frame.captured_at,
-    source_width: result.frame.source_width,
-    source_height: result.frame.source_height,
+    capture_ms: completed.timing.capture_ms,
+    request_ms: completed.timing.request_ms,
+    capture_to_result_ms: performance.now() - completed.timing.capture_started_at,
+    server: completed.timing.server,
   });
-  frames = result.frame_count;
-  updateDetections(result.detections);
-  latestResultTiming = completed.timing;
-  schedulerTiming.accepted_results += 1;
-  elements.finishCapture.disabled = false;
-  return true;
-}
-
-function createLatestFrameScheduler(generation, expectedSession, expectedSource, onError) {
-  let accepting = true;
-  let inFlight = null;
-  let pending = null;
-  let requestController = null;
-  const idleWaiters = [];
-
-  const publishCapacity = function () {
-    if (!isCurrent()) {
-      return;
-    }
-    schedulerTiming.in_flight = inFlight ? 1 : 0;
-    schedulerTiming.pending = pending ? 1 : 0;
-    schedulerTiming.max_pending = Math.max(schedulerTiming.max_pending, schedulerTiming.pending);
-  };
-
-  const settleIdle = function () {
-    if (inFlight || pending) {
-      return;
-    }
-    while (idleWaiters.length) {
-      idleWaiters.shift()();
-    }
-  };
-
-  const isCurrent = function () {
-    return liveGenerationMatches(generation, expectedSession, expectedSource);
-  };
-
-  const launch = function (frame) {
-    inFlight = frame;
-    requestController = new AbortController();
-    schedulerTiming.admitted += 1;
-    publishCapacity();
-
-    void postLiveFrame(frame, requestController.signal).then(function (completed) {
-      if (!isCurrent()) {
-        return;
-      }
-      schedulerTiming.completed += 1;
-      acceptLiveDetectorResult(frame, completed, generation);
-    }).catch(function (error) {
-      if (error && error.name === "AbortError") {
-        return;
-      }
-      if (isCurrent()) {
-        accepting = false;
-        schedulerTiming.request_errors += 1;
-        window.setTimeout(function () { onError(error); }, 0);
-      }
-    }).finally(function () {
-      inFlight = null;
-      requestController = null;
-      if (accepting && isCurrent() && pending) {
-        const next = pending;
-        pending = null;
-        publishCapacity();
-        launch(next);
-        return;
-      }
-      if (pending) {
-        pending = null;
-        schedulerTiming.shutdown_drops += 1;
-        schedulerTiming.dropped += 1;
-      }
-      publishCapacity();
-      settleIdle();
-    });
-  };
-
-  return {
-    offer: function (frame) {
-      if (!accepting || !isCurrent()) {
-        schedulerTiming.shutdown_drops += 1;
-        schedulerTiming.dropped += 1;
-        return;
-      }
-      if (!inFlight) {
-        launch(frame);
-        return;
-      }
-      schedulerTiming.busy_source_frames += 1;
-      if (pending) {
-        schedulerTiming.overwritten += 1;
-        schedulerTiming.dropped += 1;
-      }
-      pending = frame;
-      publishCapacity();
-    },
-    stop: function (abortInFlight) {
-      accepting = false;
-      if (pending) {
-        pending = null;
-        schedulerTiming.shutdown_drops += 1;
-        schedulerTiming.dropped += 1;
-      }
-      if (
-        abortInFlight
-        && requestController
-        && !requestController.signal.aborted
-      ) {
-        schedulerTiming.aborted_requests += 1;
-        requestController.abort();
-      }
-      publishCapacity();
-      if (!inFlight) {
-        return Promise.resolve();
-      }
-      return new Promise(function (resolve) { idleWaiters.push(resolve); });
-    },
-    snapshot: function () {
-      return {
-        generation: generation,
-        accepting: accepting,
-        in_flight: Boolean(inFlight),
-        in_flight_sequence: inFlight ? inFlight.sequence : null,
-        pending: Boolean(pending),
-        pending_sequence: pending ? pending.sequence : null,
-      };
-    },
-  };
-}
-
-function predictionSuppressionReason(prediction, displayedAt) {
-  if (!prediction || prediction.valid !== true || prediction.validity !== "valid") {
-    return "invalid-state";
+  if (analysisTiming.samples.length > MAX_TIMING_SAMPLES) {
+    analysisTiming.samples.shift();
   }
-  if (
-    !Number.isInteger(prediction.track_id)
-    || !Number.isInteger(prediction.class_id)
-    || prediction.class_id < 0
-    || !["confirmed", "lost"].includes(prediction.track_state)
-    || typeof prediction.label !== "string"
-    || !Number.isFinite(prediction.score)
-    || !Number.isFinite(prediction.state_timestamp)
-    || !Number.isFinite(prediction.prediction_age)
-    || prediction.prediction_age < 0
-    || !Array.isArray(prediction.box)
-    || prediction.box.length !== 4
-    || !prediction.box.every(Number.isFinite)
-  ) {
-    return "non-finite-or-malformed";
-  }
-  if (prediction.box[2] <= prediction.box[0] || prediction.box[3] <= prediction.box[1]) {
-    return "invalid-geometry";
-  }
-  const age = displayedAt - prediction.state_timestamp;
-  if (!Number.isFinite(age) || age < 0 || age > configuredOverlayAgeSeconds()) {
-    return "over-age";
-  }
-  return null;
-}
-
-function displayPredictionsFor(displayedAt) {
-  const visible = latestDisplayPredictions.filter(function (prediction) {
-    return predictionSuppressionReason(prediction, displayedAt) === null;
-  });
-  if (visible.length < latestDisplayPredictions.length) {
-    schedulerTiming.stale_overlay_frames += 1;
-  }
-  if (visible.length && overlaysEnabled) {
-    schedulerTiming.rendered_overlay_frames += 1;
-  }
-  return visible;
-}
-
-function predictionResponseSuppressionReason(expected, payload, receivedAt) {
-  if (!liveGenerationMatches(expected.generation, expected.session_id, expected.source_id)) {
-    return "wrong-session";
-  }
-  if (!payload || payload.schema_version !== "1.1" || !Array.isArray(payload.predictions)) {
-    return "malformed-result";
-  }
-  if (payload.source_id !== expected.source_id) {
-    return "wrong-source";
-  }
-  if (payload.displayed_at !== expected.displayed_at) {
-    return "mismatched-display-time";
-  }
-  if (latestPredictionTimestamp !== null && payload.displayed_at <= latestPredictionTimestamp) {
-    return "out-of-order-result";
-  }
-  if (!Number.isFinite(receivedAt) || receivedAt < payload.displayed_at) {
-    return "invalid-display-time";
-  }
-  return null;
-}
-
-function stopDisplayPredictionRequest() {
-  const request = displayPredictionRequest;
-  if (request && !request.controller.signal.aborted) {
-    schedulerTiming.prediction_aborted += 1;
-    request.controller.abort();
-  }
-  displayPredictionRequest = null;
-}
-
-function requestCurrentDisplayPredictions(displayedAt, generation) {
-  if (
-    displayPredictionRequest
-    || !latestAcceptedFrame
-    || !liveGenerationMatches(generation, session, sourceIdentity)
-  ) {
-    return;
-  }
-  const expected = Object.freeze({
-    generation: generation,
-    session_id: session,
-    source_id: sourceIdentity,
-    displayed_at: displayedAt,
-  });
-  const controller = new AbortController();
-  const request = { expected: expected, controller: controller };
-  displayPredictionRequest = request;
-  schedulerTiming.prediction_requests += 1;
-
-  const url = new URL(apiUrl("/v1/sessions/" + expected.session_id + "/display-predictions"));
-  url.searchParams.set("source_id", expected.source_id);
-  url.searchParams.set("displayed_at", String(expected.displayed_at));
-  void fetch(url.toString(), { signal: controller.signal }).then(async function (response) {
-    if (!response.ok) {
-      throw new Error("Display prediction was unavailable (" + response.status + ").");
-    }
-    const payload = await response.json();
-    if (displayPredictionRequest !== request) {
-      return;
-    }
-    schedulerTiming.prediction_completed += 1;
-    const receivedAt = Math.max(
-      latestDisplayTimestamp === null ? expected.displayed_at : latestDisplayTimestamp,
-      performance.now() / 1000,
-    );
-    const reason = predictionResponseSuppressionReason(expected, payload, receivedAt);
-    if (reason) {
-      schedulerTiming.prediction_suppressed += 1;
-      schedulerTiming.last_prediction_suppression = reason;
-      return;
-    }
-
-    const accepted = [];
-    payload.predictions.forEach(function (prediction) {
-      const predictionReason = predictionSuppressionReason(prediction, receivedAt);
-      if (predictionReason) {
-        schedulerTiming.invalid_predictions += 1;
-        return;
-      }
-      accepted.push(Object.freeze({ ...prediction, box: Object.freeze(prediction.box.slice()) }));
-    });
-    latestDisplayPredictions = accepted;
-    latestPredictionTimestamp = payload.displayed_at;
-    schedulerTiming.prediction_accepted += 1;
-  }).catch(function (error) {
-    if (error && error.name === "AbortError") {
-      return;
-    }
-    if (
-      displayPredictionRequest !== request
-      || !liveGenerationMatches(expected.generation, expected.session_id, expected.source_id)
-    ) {
-      return;
-    }
-    schedulerTiming.prediction_errors += 1;
-  }).finally(function () {
-    if (displayPredictionRequest === request) {
-      displayPredictionRequest = null;
-    }
-  });
 }
 
 function setState(nextState, moveFocus) {
@@ -1250,39 +877,34 @@ async function deleteSession() {
   }
 }
 
-async function captureLiveFrame(video, capturedAt, generation, expectedSession, expectedSource) {
+function captureFrame(video, capturedAt) {
   const captureStartedAt = performance.now();
-  const sourceWidth = video.videoWidth;
-  const sourceHeight = video.videoHeight;
-  const sequence = sourceSequence;
+  const frame = {
+    session_id: session,
+    source_id: sourceIdentity,
+    sequence: sourceSequence,
+    captured_at: capturedAt,
+    source_width: video.videoWidth,
+    source_height: video.videoHeight,
+    capture_started_at: captureStartedAt,
+  };
   sourceSequence += 1;
-  if (!sourceWidth || !sourceHeight) {
-    throw new Error("The camera did not provide valid source dimensions.");
-  }
-  if (capture.width !== sourceWidth || capture.height !== sourceHeight) {
-    capture.width = sourceWidth;
-    capture.height = sourceHeight;
+  if (capture.width !== frame.source_width || capture.height !== frame.source_height) {
+    capture.width = frame.source_width;
+    capture.height = frame.source_height;
   }
   captureContext.drawImage(video, 0, 0);
-  const blob = await new Promise(function (resolve) { capture.toBlob(resolve, "image/jpeg", 0.9); });
-  if (!blob) {
-    throw new Error("The current camera frame could not be captured.");
-  }
-  return Object.freeze({
-    blob: blob,
-    generation: generation,
-    session_id: expectedSession,
-    source_id: expectedSource,
-    sequence: sequence,
-    captured_at: capturedAt,
-    source_width: sourceWidth,
-    source_height: sourceHeight,
-    capture_started_at: captureStartedAt,
-    capture_ms: performance.now() - captureStartedAt,
+  return new Promise(function (resolve) { capture.toBlob(resolve, "image/jpeg", 0.9); }).then(function (blob) {
+    if (!blob) {
+      throw new Error("The current video frame could not be captured.");
+    }
+    frame.blob = blob;
+    frame.capture_ms = performance.now() - captureStartedAt;
+    return frame;
   });
 }
 
-async function postLiveFrame(frame, signal) {
+async function postFrame(frame) {
   const body = new FormData();
   body.append("image", frame.blob, "frame.jpg");
   body.append("schema_version", "1.1");
@@ -1295,69 +917,18 @@ async function postLiveFrame(frame, signal) {
   const response = await fetch(apiUrl("/v1/sessions/" + frame.session_id + "/frames"), {
     method: "POST",
     body: body,
-    signal: signal,
   });
   if (!response.ok) {
-    throw new Error("The scanner rejected a camera frame (" + response.status + ").");
+    throw new Error("The scanner rejected a frame (" + response.status + ").");
   }
-  const responseHeadersAt = performance.now();
   const result = await response.json();
-  const responseBodyAt = performance.now();
   return {
     result: result,
     timing: {
       capture_started_at: frame.capture_started_at,
       capture_ms: frame.capture_ms,
-      request_ms: responseBodyAt - requestStartedAt,
-      response_body_ms: responseBodyAt - responseHeadersAt,
+      request_ms: performance.now() - requestStartedAt,
       server: parseServerTiming(response.headers.get("Server-Timing")),
-      display_count: 0,
-    },
-  };
-}
-
-async function postFrame(video) {
-  const captureStartedAt = performance.now();
-  const capturedAt = mediaKind === "video" ? video.currentTime : captureStartedAt / 1000;
-  if (capture.width !== video.videoWidth || capture.height !== video.videoHeight) {
-    capture.width = video.videoWidth;
-    capture.height = video.videoHeight;
-  }
-  captureContext.drawImage(video, 0, 0);
-  const blob = await new Promise(function (resolve) { capture.toBlob(resolve, "image/jpeg", 0.9); });
-  if (!blob) {
-    throw new Error("The current video frame could not be captured.");
-  }
-  const captureCompletedAt = performance.now();
-  const body = new FormData();
-  body.append("image", blob, "frame.jpg");
-  body.append("schema_version", "1.1");
-  body.append("source_id", sourceIdentity);
-  body.append("sequence", String(sourceSequence));
-  body.append("captured_at", String(capturedAt));
-  body.append("source_width", String(video.videoWidth));
-  body.append("source_height", String(video.videoHeight));
-  sourceSequence += 1;
-  const requestStartedAt = performance.now();
-  const response = await fetch(apiUrl("/v1/sessions/" + session + "/frames"), {
-    method: "POST",
-    body: body,
-  });
-  if (!response.ok) {
-    throw new Error("The scanner rejected a video frame (" + response.status + ").");
-  }
-  const responseHeadersAt = performance.now();
-  const result = await response.json();
-  const responseBodyAt = performance.now();
-  return {
-    result: result,
-    timing: {
-      capture_started_at: captureStartedAt,
-      capture_ms: captureCompletedAt - captureStartedAt,
-      request_ms: responseBodyAt - requestStartedAt,
-      response_body_ms: responseBodyAt - responseHeadersAt,
-      server: parseServerTiming(response.headers.get("Server-Timing")),
-      display_count: 0,
     },
   };
 }
@@ -1433,27 +1004,16 @@ function updateDetections(detections) {
 }
 
 function resetSessionData() {
-  liveGeneration += 1;
-  if (liveScheduler) {
-    void liveScheduler.stop(true);
-  }
-  liveScheduler = null;
-  stopLiveCapture = null;
-  stopDisplayPredictionRequest();
   frames = 0;
   latestDetections = [];
+  latestCapturedAt = null;
   seenClasses = new Map();
   finalizedResult = null;
   finalizedAt = null;
-  latestResultTiming = null;
   sourceIdentity = null;
   sourceSequence = 0;
-  latestAcceptedFrame = null;
-  latestDisplayPredictions = [];
-  latestDisplayTimestamp = null;
-  latestPredictionTimestamp = null;
-  timingSamples.length = 0;
-  resetSchedulerTiming();
+  resetAnalysisTiming();
+  showResultsDelayed(false);
   elements.objectCount.textContent = "0";
   elements.elapsed.textContent = "00:00";
   elements.finishCapture.disabled = true;
@@ -1467,27 +1027,11 @@ function resetSessionData() {
 
 function releaseMedia() {
   running = false;
-  liveGeneration += 1;
-  if (stopLiveCapture) {
-    void stopLiveCapture(true);
-  } else if (liveScheduler) {
-    void liveScheduler.stop(true);
-  }
-  stopLiveCapture = null;
-  liveScheduler = null;
-  schedulerTiming.in_flight = 0;
-  schedulerTiming.pending = 0;
-  stopDisplayPredictionRequest();
-  latestDisplayPredictions = [];
   stopElapsedTimer();
-  if (source && videoFrameCallback !== null && source.cancelVideoFrameCallback) {
+  if (source && videoFrameCallback !== null) {
     source.cancelVideoFrameCallback(videoFrameCallback);
   }
   videoFrameCallback = null;
-  if (animationFrameCallback !== null) {
-    window.cancelAnimationFrame(animationFrameCallback);
-    animationFrameCallback = null;
-  }
   if (source) {
     source.pause();
     source.srcObject = null;
@@ -1511,7 +1055,7 @@ async function failCapture(error) {
   showAlert(error && error.message ? error.message : "The scan could not continue.");
 }
 
-async function startCapture(video, runner, kind) {
+async function startCapture(video, kind) {
   resetSessionData();
   mediaKind = kind;
   source = video;
@@ -1522,186 +1066,103 @@ async function startCapture(video, runner, kind) {
     running = true;
     setState("live");
     startElapsedTimer();
-    await runner(video);
+    await runAnalysis(video);
   } catch (error) {
     await failCapture(error);
   }
 }
 
-function runCamera(video) {
-  const generation = liveGeneration;
-  const expectedSession = session;
-  const expectedSource = sourceIdentity;
-  const selectionIntervalMs = 1000 / configuredLiveDetectorFps();
-  let acceptingFrames = true;
-  let activeCapture = null;
-  let nextSelectionAt = null;
-
-  const reportError = function (error) {
-    if (liveGenerationMatches(generation, expectedSession, expectedSource)) {
-      void failCapture(error);
-    }
-  };
-  const scheduler = createLatestFrameScheduler(
-    generation,
-    expectedSession,
-    expectedSource,
-    reportError,
-  );
-  liveScheduler = scheduler;
-
-  const cancelDisplayLoop = function () {
-    if (videoFrameCallback !== null && video.cancelVideoFrameCallback) {
-      video.cancelVideoFrameCallback(videoFrameCallback);
-      videoFrameCallback = null;
-    }
-    if (animationFrameCallback !== null) {
-      window.cancelAnimationFrame(animationFrameCallback);
-      animationFrameCallback = null;
-    }
-  };
-
-  stopLiveCapture = async function (abortInFlight) {
-    acceptingFrames = false;
-    cancelDisplayLoop();
-    stopDisplayPredictionRequest();
-    const captureToDrain = activeCapture;
-    const schedulerStop = scheduler.stop(abortInFlight);
-    if (captureToDrain) {
-      await captureToDrain;
-    }
-    await schedulerStop;
-  };
-
-  const scheduleDisplay = function (callback) {
-    if (video.requestVideoFrameCallback) {
-      videoFrameCallback = video.requestVideoFrameCallback(callback);
-    } else {
-      animationFrameCallback = window.requestAnimationFrame(callback);
-    }
-  };
-
-  const showFrame = function (now) {
-    videoFrameCallback = null;
-    animationFrameCallback = null;
-    if (
-      !running
-      || !acceptingFrames
-      || !liveGenerationMatches(generation, expectedSession, expectedSource)
-    ) {
-      return;
-    }
-
-    latestDisplayTimestamp = now / 1000;
-    draw(video, displayPredictionsFor(latestDisplayTimestamp));
-    recordDisplayTiming(latestResultTiming);
-    updateElapsed();
-    requestCurrentDisplayPredictions(latestDisplayTimestamp, generation);
-
-    if (nextSelectionAt === null || now + 1e-6 >= nextSelectionAt) {
-      schedulerTiming.selection_opportunities += 1;
-      nextSelectionAt = nextSelectionAt === null ? now : nextSelectionAt;
-      do {
-        nextSelectionAt += selectionIntervalMs;
-      } while (nextSelectionAt <= now);
-
-      if (activeCapture) {
-        schedulerTiming.capture_busy_drops += 1;
-        schedulerTiming.dropped += 1;
-      } else {
-        const capturedAt = latestDisplayTimestamp;
-        activeCapture = captureLiveFrame(
-          video,
-          capturedAt,
-          generation,
-          expectedSession,
-          expectedSource,
-        ).then(function (frame) {
-          if (generation !== liveGeneration) {
-            return;
-          }
-          schedulerTiming.selected += 1;
-          if (
-            !acceptingFrames
-            || !liveGenerationMatches(generation, expectedSession, expectedSource)
-          ) {
-            schedulerTiming.shutdown_drops += 1;
-            schedulerTiming.dropped += 1;
-            return;
-          }
-          scheduler.offer(frame);
-        }).catch(function (error) {
-          if (generation !== liveGeneration) {
-            return;
-          }
-          schedulerTiming.capture_errors += 1;
-          if (acceptingFrames) {
-            reportError(error);
-          }
-        }).finally(function () {
-          activeCapture = null;
-        });
-      }
-    }
-
-    scheduleDisplay(showFrame);
-  };
-
-  scheduleDisplay(showFrame);
-}
-
-async function runVideo(video) {
-  let presentedFrames = 0;
-  let lastInferenceFrame = 1 - INFERENCE_FRAME_STRIDE;
-  let inferenceInFlight = false;
+// One loop for camera and recorded video: select a frame every analysis interval of source
+// time and keep one request in flight. A busy selection is skipped for live video; recorded
+// video pauses on the selected frame until the in-flight result returns.
+async function runAnalysis(video) {
+  const live = mediaKind === "camera";
+  const runSource = sourceIdentity;
+  let gridStart = live ? null : 0;
+  let gridIndex = 0;
+  let inFlight = null;
   let playbackEnded = false;
-  let completed = false;
+
+  const isCurrent = function () {
+    return running && sourceIdentity === runSource;
+  };
 
   const finishWhenReady = function () {
-    if (!running || !playbackEnded || inferenceInFlight || completed) {
-      return;
-    }
-    completed = true;
-    finishCapture();
-  };
-
-  const infer = async function () {
-    inferenceInFlight = true;
-    try {
-      const completed = await postFrame(video);
-      const result = completed.result;
-      frames = result.frame_count;
-      updateDetections(result.detections);
-      latestResultTiming = completed.timing;
-      elements.finishCapture.disabled = false;
-    } catch (error) {
-      await failCapture(error);
-    } finally {
-      inferenceInFlight = false;
-      finishWhenReady();
+    if (isCurrent() && playbackEnded && !inFlight) {
+      finishCapture();
     }
   };
 
-  const showFrame = function (_now, metadata) {
-    if (!running) {
-      videoFrameCallback = null;
-      return;
-    }
-    presentedFrames = metadata.presentedFrames;
-    draw(video, latestDetections);
-    recordDisplayTiming(latestResultTiming);
-    updateElapsed();
-    if (presentedFrames - lastInferenceFrame >= INFERENCE_FRAME_STRIDE) {
-      if (inferenceInFlight) {
-        schedulerTiming.busy_source_frames += 1;
-      } else {
-        lastInferenceFrame = presentedFrames;
-        schedulerTiming.admitted += 1;
-        void infer();
+  const analyze = function (framePromise) {
+    inFlight = framePromise.then(postFrame).then(acceptResult).catch(function (error) {
+      if (isCurrent()) {
+        void failCapture(error);
       }
-    }
-    videoFrameCallback = video.requestVideoFrameCallback(showFrame);
+    }).finally(function () {
+      inFlight = null;
+      finishWhenReady();
+    });
   };
+
+  const select = function (sourceTime) {
+    analysisTiming.selections += 1;
+    if (inFlight && live) {
+      analysisTiming.skipped_selections += 1;
+      return;
+    }
+    const frame = captureFrame(video, sourceTime);
+    if (!inFlight) {
+      analyze(frame);
+      return;
+    }
+    const pausedAt = performance.now();
+    video.pause();
+    void inFlight.then(function () {
+      if (!isCurrent()) {
+        return;
+      }
+      analysisTiming.paused_ms += performance.now() - pausedAt;
+      analyze(frame);
+      void video.play();
+    });
+  };
+
+  const selectIfDue = function (sourceTime) {
+    if (gridStart === null) {
+      gridStart = sourceTime;
+    }
+    const due = sourceTime + GRID_TOLERANCE_SECONDS - gridStart;
+    if (due >= gridIndex * ANALYSIS_INTERVAL_SECONDS) {
+      gridIndex = Math.floor(due / ANALYSIS_INTERVAL_SECONDS) + 1;
+      select(sourceTime);
+    }
+  };
+
+  const onFrame = function (now, metadata) {
+    videoFrameCallback = null;
+    if (!isCurrent()) {
+      return;
+    }
+    const age = overlayAgeSeconds();
+    showResultsDelayed(age > MAX_OVERLAY_AGE_SECONDS);
+    if (age > MAX_OVERLAY_AGE_SECONDS) {
+      analysisTiming.stale_overlay_frames += 1;
+    }
+    analysisTiming.max_overlay_age_ms = Math.max(analysisTiming.max_overlay_age_ms, age * 1000);
+    draw(video, visibleDetections());
+    updateElapsed();
+
+    selectIfDue(live ? now / 1000 : metadata.mediaTime);
+    videoFrameCallback = video.requestVideoFrameCallback(onFrame);
+  };
+
+  if (!video.requestVideoFrameCallback) {
+    throw new Error("This browser does not support video scanning. Try a current browser.");
+  }
+  videoFrameCallback = video.requestVideoFrameCallback(onFrame);
+  if (live) {
+    return;
+  }
 
   video.addEventListener("ended", function () {
     playbackEnded = true;
@@ -1723,31 +1184,17 @@ async function runVideo(video) {
     }
   }, { once: true });
 
-  if (!video.requestVideoFrameCallback) {
-    throw new Error("This browser does not support recorded-video scanning. Try a current browser.");
-  }
-  videoFrameCallback = video.requestVideoFrameCallback(showFrame);
+  // the first frame is already shown before playback starts and may never reach onFrame
+  selectIfDue(video.currentTime);
   await video.play();
 }
 
-async function finishCapture() {
+function finishCapture() {
   if (uiState !== "live" || frames < 1) {
     if (uiState === "live") {
       showAlert("Keep the tray in view until the first scan result is ready.");
     }
     return;
-  }
-  if (mediaKind === "camera" && stopLiveCapture) {
-    elements.finishCapture.disabled = true;
-    const stop = stopLiveCapture;
-    await stop(false);
-    if (uiState !== "live") {
-      return;
-    }
-    if (stopLiveCapture === stop) {
-      stopLiveCapture = null;
-      liveScheduler = null;
-    }
   }
   releaseMedia();
   const typeCount = seenClasses.size;
@@ -2036,7 +1483,7 @@ elements.camera.addEventListener("click", async function () {
     video.muted = true;
     video.playsInline = true;
     await video.play();
-    await startCapture(video, runCamera, "camera");
+    await startCapture(video, "camera");
   } catch (_error) {
     await failCapture(new Error("Camera access was unavailable. Check browser permissions and try again."));
   }
@@ -2063,7 +1510,7 @@ elements.file.addEventListener("change", async function (event) {
         reject(new Error("The selected video could not be opened."));
       }, { once: true });
     });
-    await startCapture(video, runVideo, "video");
+    await startCapture(video, "video");
   } catch (error) {
     await failCapture(error);
   }
@@ -2074,10 +1521,7 @@ elements.overlayToggle.addEventListener("click", function () {
   elements.overlayToggle.setAttribute("aria-pressed", String(overlaysEnabled));
   elements.overlayToggle.textContent = overlaysEnabled ? "Overlays on" : "Overlays off";
   if (source && source.readyState >= 2) {
-    const detections = mediaKind === "camera" && latestDisplayTimestamp !== null
-      ? displayPredictionsFor(latestDisplayTimestamp)
-      : latestDetections;
-    draw(source, detections);
+    draw(source, visibleDetections());
   }
 });
 

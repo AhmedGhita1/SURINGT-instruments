@@ -177,49 +177,94 @@ def test_console_wires_session_lifecycle_through_signed_api_urls() -> None:
     assert '"/finalize"' in source
     assert 'method: "DELETE"' in source
     assert "keepalive: true" in source
-    assert "requestVideoFrameCallback(showFrame)" in source
-    assert "presentedFrames - lastInferenceFrame" in source
 
 
-def test_console_records_bounded_capture_to_display_timing_and_capacity() -> None:
+def test_camera_and_recorded_video_share_one_analysis_loop() -> None:
+    source = console_source()
+
+    assert 'startCapture(video, "camera")' in source
+    assert 'startCapture(video, "video")' in source
+    assert "await runAnalysis(video)" in source
+    for removed in (
+        "function runCamera",
+        "function runVideo",
+        "createLatestFrameScheduler",
+        "/display-predictions",
+        "liveGeneration",
+        "INFERENCE_FRAME_STRIDE",
+        "surgintLiveConfig",
+    ):
+        assert removed not in source
+
+
+def test_loop_selects_frames_on_a_source_time_grid() -> None:
+    loop = source_between("async function runAnalysis", "function finishCapture")
+
+    assert "const ANALYSIS_INTERVAL_SECONDS = 0.2;" in console_source()
+    assert "video.requestVideoFrameCallback(onFrame)" in loop
+    assert "selectIfDue(live ? now / 1000 : metadata.mediaTime)" in loop
+    assert loop.index("selectIfDue(video.currentTime)") < loop.index("await video.play()")
+    assert "let gridStart = live ? null : 0" in loop
+    assert "due >= gridIndex * ANALYSIS_INTERVAL_SECONDS" in loop
+    assert "gridIndex = Math.floor(due / ANALYSIS_INTERVAL_SECONDS) + 1" in loop
+
+
+def test_loop_keeps_one_request_in_flight() -> None:
+    loop = source_between("async function runAnalysis", "function finishCapture")
+    select = loop.split("const select = function (sourceTime) {", 1)[1].split(
+        "const onFrame", 1
+    )[0]
+
+    assert "let inFlight = null" in loop
+    assert "inFlight = framePromise.then(postFrame).then(acceptResult)" in loop
+    assert "inFlight = null" in loop
+    skip = "if (inFlight && live) {"
+    assert skip in select
+    assert select.index(skip) < select.index("captureFrame(video, sourceTime)")
+    assert "analysisTiming.skipped_selections += 1" in select
+    assert "video.pause()" in select
+    assert "inFlight.then(function () {" in select
+    assert "analysisTiming.paused_ms += performance.now() - pausedAt" in select
+    assert select.index("analyze(frame);\n      void video.play()") > select.index("video.pause()")
+
+
+def test_results_from_an_earlier_source_or_after_stop_are_ignored() -> None:
+    accept = source_between("function acceptResult", "function setState")
+
+    guard = "if (!running || result.frame.source_id !== sourceIdentity) {"
+    assert guard in accept
+    assert accept.index(guard) < accept.index("updateDetections(result.detections)")
+    assert accept.index(guard) < accept.index("frames = result.frame_count")
+    assert "sourceIdentity = null" in source_between("function resetSessionData", "function releaseMedia")
+    assert "running = false" in source_between("function releaseMedia", "async function failCapture")
+
+
+def test_stale_live_overlays_are_hidden_and_shown_as_delayed() -> None:
+    source = console_source()
+
+    assert "const MAX_OVERLAY_AGE_SECONDS = 0.4;" in source
+    assert 'mediaKind === "camera" && latestCapturedAt !== null' in source
+    assert "performance.now() / 1000 - latestCapturedAt" in source
+    assert "overlayAgeSeconds() <= MAX_OVERLAY_AGE_SECONDS ? latestDetections : []" in source
+    assert '"Results delayed"' in source
+    assert "showResultsDelayed(age > MAX_OVERLAY_AGE_SECONDS)" in source
+    assert "draw(video, visibleDetections())" in source
+    assert ".live-status.delayed" in source
+
+
+def test_console_records_a_small_timing_summary() -> None:
     source = console_source()
 
     assert "MAX_TIMING_SAMPLES = 1000" in source
-    assert "window.surgintTiming" in source
+    assert "window.surgintTiming = analysisTiming" in source
     assert 'response.headers.get("Server-Timing")' in source
-    assert "display_age_ms: performance.now() - timing.capture_started_at" in source
-    assert "schedulerTiming.busy_source_frames += 1" in source
-    assert "schedulerTiming.overwritten += 1" in source
-    assert "schedulerTiming.shutdown_drops += 1" in source
-    assert "schedulerTiming.max_pending" in source
-    assert "schedulerSnapshot" in source
+    assert "capture_to_result_ms: performance.now() - completed.timing.capture_started_at" in source
     for counter in (
-        "selection_opportunities",
-        "selected",
-        "capture_busy_drops",
-        "capture_errors",
-        "admitted",
-        "busy_source_frames",
-        "overwritten",
-        "shutdown_drops",
-        "dropped",
-        "completed",
-        "accepted_results",
-        "suppressed_results",
-        "request_errors",
-        "aborted_requests",
-        "in_flight",
-        "pending",
-        "max_pending",
-        "prediction_requests",
-        "prediction_completed",
-        "prediction_accepted",
-        "prediction_suppressed",
-        "prediction_errors",
-        "prediction_aborted",
-        "invalid_predictions",
+        "selections",
+        "skipped_selections",
+        "paused_ms",
         "stale_overlay_frames",
-        "rendered_overlay_frames",
+        "max_overlay_age_ms",
     ):
         assert f"{counter}: 0" in source
 
@@ -229,169 +274,22 @@ def test_console_sends_complete_client_temporal_metadata() -> None:
 
     for field in (
         'body.append("schema_version", "1.1")',
-        'body.append("source_id", sourceIdentity)',
-        'body.append("sequence", String(sourceSequence))',
-        'body.append("captured_at", String(capturedAt))',
-        'body.append("source_width", String(video.videoWidth))',
-        'body.append("source_height", String(video.videoHeight))',
+        'body.append("source_id", frame.source_id)',
+        'body.append("sequence", String(frame.sequence))',
+        'body.append("captured_at", String(frame.captured_at))',
+        'body.append("source_width", String(frame.source_width))',
+        'body.append("source_height", String(frame.source_height))',
     ):
         assert field in source
 
+    assert "sequence: sourceSequence" in source
     assert "sourceSequence += 1" in source
     assert "sourceIdentity = kind + \":\" + session" in source
 
 
-def test_live_scheduler_has_one_in_flight_and_one_replaceable_pending_frame() -> None:
-    scheduler = source_between(
-        "function createLatestFrameScheduler",
-        "function predictionSuppressionReason",
-    )
-
-    assert "let inFlight = null" in scheduler
-    assert "let pending = null" in scheduler
-    assert "if (!inFlight)" in scheduler
-    assert "launch(frame)" in scheduler
-    assert "if (pending)" in scheduler
-    assert "pending = frame" in scheduler
-    assert "const next = pending" in scheduler
-    assert "launch(next)" in scheduler
-    assert "schedulerTiming.overwritten += 1" in scheduler
-    assert "schedulerTiming.max_pending = Math.max" in scheduler
-    assert "pending: Boolean(pending)" in scheduler
-
-
-def test_live_camera_uses_an_independent_display_and_selection_clock() -> None:
-    camera = source_between("function runCamera", "async function runVideo")
-
-    assert "1000 / configuredLiveDetectorFps()" in camera
-    assert "video.requestVideoFrameCallback" in camera
-    assert "window.requestAnimationFrame" in camera
-    assert "draw(video, displayPredictionsFor(latestDisplayTimestamp))" in camera
-    assert "requestCurrentDisplayPredictions(latestDisplayTimestamp, generation)" in camera
-    assert "const capturedAt = latestDisplayTimestamp" in camera
-    assert "activeCapture = captureLiveFrame(" in camera
-    assert "scheduler.offer(frame)" in camera
-    assert "await postLiveFrame" not in camera
-
-
-def test_live_results_are_correlated_before_updating_detector_backed_state() -> None:
-    validation = source_between(
-        "function detectorResultSuppressionReason",
-        "function createLatestFrameScheduler",
-    )
-
-    for contract_check in (
-        'result.schema_version !== "1.1"',
-        "result.frame.source_id !== frame.source_id",
-        'result.frame.metadata_origin !== "client"',
-        "result.frame.sequence !== frame.sequence",
-        "result.frame.captured_at !== frame.captured_at",
-        "result.frame.source_width !== frame.source_width",
-        "result.frame.source_height !== frame.source_height",
-        "result.frame.sequence <= latestAcceptedFrame.sequence",
-    ):
-        assert contract_check in validation
-
-    assert "updateDetections(result.detections)" in validation
-    assert "schedulerTiming.accepted_results += 1" in validation
-    assert "schedulerTiming.suppressed_results += 1" in validation
-
-
-def test_display_predictions_are_bounded_validated_and_display_only() -> None:
-    source = console_source()
-    prediction = source_between(
-        "function predictionSuppressionReason",
-        "function stopDisplayPredictionRequest",
-    )
-    request = source_between(
-        "function requestCurrentDisplayPredictions",
-        "function setState",
-    )
-
-    assert '"/display-predictions"' in source
-    assert "if (displayPredictionRequest" in request
-    assert "displayPredictionRequest = request" in request
-    assert "latestDisplayTimestamp" in request
-    assert "performance.now() / 1000" in request
-    assert "predictionSuppressionReason(prediction, receivedAt)" in request
-    assert "updateDetections" not in request
-    assert "seenClasses" not in request
-
-    assert 'prediction.validity !== "valid"' in prediction
-    assert "prediction.box.every(Number.isFinite)" in prediction
-    assert "prediction.box[2] <= prediction.box[0]" in prediction
-    assert "displayedAt - prediction.state_timestamp" in prediction
-    assert "age > configuredOverlayAgeSeconds()" in prediction
-
-
-def test_invalidated_prediction_failure_cannot_mutate_new_session_counters() -> None:
-    request = source_between(
-        "function requestCurrentDisplayPredictions",
-        "function setState",
-    )
-    error_handler = request.split("}).catch(function (error) {", 1)[1].split(
-        "}).finally(function () {", 1
-    )[0]
-
-    identity_guard = "displayPredictionRequest !== request"
-    generation_guard = (
-        "!liveGenerationMatches(expected.generation, expected.session_id, expected.source_id)"
-    )
-    counter_update = "schedulerTiming.prediction_errors += 1"
-    assert identity_guard in error_handler
-    assert generation_guard in error_handler
-    assert error_handler.index(identity_guard) < error_handler.index(counter_update)
-    assert error_handler.index(generation_guard) < error_handler.index(counter_update)
-
-
-def test_generation_token_and_finish_drain_invalidate_late_live_work() -> None:
-    source = console_source()
-    finish = source_between("async function finishCapture", "async function discardCurrentSession")
-
-    assert "generation === liveGeneration" in source
-    assert "liveGeneration += 1" in source
-    assert "requestController.abort()" in source
-    assert "await stop(false)" in finish
-    assert "releaseMedia();" in finish
-
-
-def test_live_stop_drains_and_drops_an_active_capture_before_release() -> None:
-    camera = source_between("function runCamera", "async function runVideo")
-    stop = camera.split("stopLiveCapture = async function (abortInFlight) {", 1)[1].split(
-        "const scheduleDisplay", 1
-    )[0]
-
-    assert "let activeCapture = null" in camera
-    assert "const captureToDrain = activeCapture" in stop
-    assert "const schedulerStop = scheduler.stop(abortInFlight)" in stop
-    assert "await captureToDrain" in stop
-    assert "await schedulerStop" in stop
-    assert stop.index("acceptingFrames = false") < stop.index("const captureToDrain")
-    assert stop.index("scheduler.stop(abortInFlight)") < stop.index("await captureToDrain")
-
-    capture = camera.split("activeCapture = captureLiveFrame(", 1)[1]
-    assert "!acceptingFrames" in capture
-    assert "schedulerTiming.shutdown_drops += 1" in capture
-    assert "schedulerTiming.dropped += 1" in capture
-    assert "if (acceptingFrames)" in capture
-    assert capture.index("if (acceptingFrames)") < capture.index("reportError(error)")
-    assert "activeCapture = null" in capture
-
-
-def test_recorded_video_keeps_its_existing_sequential_scheduler() -> None:
-    video = source_between("async function runVideo", "async function finishCapture")
-
-    assert "let inferenceInFlight = false" in video
-    assert "presentedFrames - lastInferenceFrame" in video
-    assert "draw(video, latestDetections)" in video
-    assert "const completed = await postFrame(video)" in video
-    assert "liveScheduler" not in video
-    assert "pending" not in video
-
-
 def test_recorded_video_reports_a_file_that_stops_decoding() -> None:
-    video = source_between("async function runVideo", "async function finishCapture")
-    handler = video.split('video.addEventListener("error"', 1)[1]
+    loop = source_between("async function runAnalysis", "function finishCapture")
+    handler = loop.split('video.addEventListener("error"', 1)[1]
 
     assert "showAlert(" in handler
     assert "formatElapsed(video.currentTime)" in handler

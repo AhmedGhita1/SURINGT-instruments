@@ -21,6 +21,7 @@ The camera uses a latest-frame scheduler with an overwrite slot, generation chec
 - **affected:** `services/api/static/index.html`, `tests/unit/test_console_ui.py`.
 - **verification:** console tests describe the new loop. Chrome runs with a recorded 1080p file and a fake camera fed from a video show one request at a time and counted skipped live selections. Two runs of the 1080p file analyze identical timestamps. A result that arrives after a discard does not change the new scan.
 - **commit:** `refactor: share one analysis loop for camera and video`
+- **implementation notes:** the camera now requires `requestVideoFrameCallback`, as recorded video already did, so the animation-frame fallback is gone. The first recorded frame is selected before playback starts, because the browser may never report it through the frame callback.
 
 ### B.2 native video with a box overlay
 
