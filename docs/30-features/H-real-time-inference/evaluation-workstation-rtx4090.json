@@ -1,0 +1,779 @@
+{
+  "report": "RTI-07 real-time evaluation, local workstation GPU profile",
+  "date": "2026-10-15",
+  "source_commit": "7e1f3061e7bbb55f335bbd3c1a2313b8b4c2049f",
+  "result": "pass",
+  "deployment": {
+    "profile": "local workstation GPU, one session",
+    "image": "production target of Dockerfile built from the source commit, tag surgint-instruments:feat-rt-infer-7e1f306",
+    "run": "docker run --rm --gpus all -p 127.0.0.1:7862:7860",
+    "browser": "Google Chrome 151.0.7922.71 headless on the same machine, --use-angle=vulkan --enable-features=Vulkan --ignore-gpu-blocklist"
+  },
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 4090, 24 GB, driver 560.35.05",
+    "cpu": "AMD Ryzen Threadripper PRO 7955WX, 16 cores, 32 threads",
+    "os": "Ubuntu 22.04.5 LTS, kernel 6.8.0-136-generic"
+  },
+  "model": {
+    "repository": "AhmedGhita/surgint-instruments-rt-detr",
+    "revision": "bf22ea635858ec05edf272c8c27c36c05bc8f7ce",
+    "base": "PekingU/rtdetr_r18vd_coco_o365",
+    "weights_sha256": "sha256:ef6c387cfac708da21bd51261f0d35d94f37237eb5e8aa3731f2c6b010a27dd0",
+    "training_run": "fair-raven_20260917_1701",
+    "dataset_version": "production_v5",
+    "input_size": [
+      1024,
+      576
+    ]
+  },
+  "configuration": {
+    "analysis_interval_seconds": 0.2,
+    "max_overlay_age_seconds": 0.4,
+    "jpeg_quality": 0.9,
+    "nms_iou": 0.7,
+    "max_sessions": 8
+  },
+  "sources": {
+    "cam720": "Chrome fake camera fed from the first 30 s of data/synthetic/demos/demo.mp4 scaled to 1280x720 at 30 fps; 30 s per run",
+    "demo1080": "data/synthetic/demos/demo.mp4, 1920x1080, 24 fps, 64 s",
+    "mag4k": "first 30 s of data/real/magdeburg/magdeburg_20260910_video_01.mp4 (stream copy), 3840x2160 at 60 fps, shown as portrait 2160x3840"
+  },
+  "targets_at_720p_and_1080p": {
+    "analyses_per_second_min": 5.0,
+    "p95_capture_to_result_ms_max": 200.0,
+    "live_overlay_age_ms_max": 400.0,
+    "max_frame_requests_in_flight": 1
+  },
+  "loop": {
+    "cam720": {
+      "runs": [
+        {
+          "results": 150,
+          "analyses_per_source_second": 4.99,
+          "p50_capture_to_result_ms": 38,
+          "p95_capture_to_result_ms": 42.7,
+          "max_live_overlay_age_ms": 266.9,
+          "stale_overlay_frames": 0,
+          "selections": 150,
+          "skipped_selections": 0,
+          "paused_playback_s": 0.0,
+          "max_concurrent_frame_requests": 1
+        },
+        {
+          "results": 150,
+          "analyses_per_source_second": 4.99,
+          "p50_capture_to_result_ms": 35.9,
+          "p95_capture_to_result_ms": 40.7,
+          "max_live_overlay_age_ms": 266.9,
+          "stale_overlay_frames": 0,
+          "selections": 150,
+          "skipped_selections": 0,
+          "paused_playback_s": 0.0,
+          "max_concurrent_frame_requests": 1
+        }
+      ],
+      "identical_analyzed_timestamps": null,
+      "differing_selections": null,
+      "same_final_inventory": null
+    },
+    "demo1080": {
+      "runs": [
+        {
+          "results": 320,
+          "analyses_per_source_second": 5.0,
+          "p50_capture_to_result_ms": 48.3,
+          "p95_capture_to_result_ms": 52.7,
+          "max_live_overlay_age_ms": null,
+          "stale_overlay_frames": 0,
+          "selections": 320,
+          "skipped_selections": 0,
+          "paused_playback_s": 0.0,
+          "max_concurrent_frame_requests": 1,
+          "dropped_video_frames": 0,
+          "total_video_frames": 1535,
+          "inventory": [
+            [
+              "scalpel",
+              1
+            ],
+            [
+              "scissors",
+              1
+            ],
+            [
+              "retractor",
+              2
+            ],
+            [
+              "dissector",
+              1
+            ],
+            [
+              "syringe",
+              2
+            ],
+            [
+              "gauze",
+              3
+            ]
+          ]
+        },
+        {
+          "results": 320,
+          "analyses_per_source_second": 5.0,
+          "p50_capture_to_result_ms": 52.3,
+          "p95_capture_to_result_ms": 57.9,
+          "max_live_overlay_age_ms": null,
+          "stale_overlay_frames": 0,
+          "selections": 320,
+          "skipped_selections": 0,
+          "paused_playback_s": 0.0,
+          "max_concurrent_frame_requests": 1,
+          "dropped_video_frames": 0,
+          "total_video_frames": 1536,
+          "inventory": [
+            [
+              "scalpel",
+              1
+            ],
+            [
+              "scissors",
+              1
+            ],
+            [
+              "retractor",
+              2
+            ],
+            [
+              "dissector",
+              1
+            ],
+            [
+              "syringe",
+              2
+            ],
+            [
+              "gauze",
+              3
+            ]
+          ]
+        }
+      ],
+      "identical_analyzed_timestamps": true,
+      "differing_selections": 0,
+      "same_final_inventory": true
+    },
+    "mag4k": {
+      "runs": [
+        {
+          "results": 150,
+          "analyses_per_source_second": 5.0,
+          "p50_capture_to_result_ms": 174.8,
+          "p95_capture_to_result_ms": 185.6,
+          "max_live_overlay_age_ms": null,
+          "stale_overlay_frames": 0,
+          "selections": 150,
+          "skipped_selections": 0,
+          "paused_playback_s": 0.0,
+          "max_concurrent_frame_requests": 1,
+          "dropped_video_frames": 1,
+          "total_video_frames": 1784,
+          "inventory": [
+            [
+              "scalpel",
+              1
+            ],
+            [
+              "hemostat",
+              2
+            ],
+            [
+              "scissors",
+              1
+            ],
+            [
+              "retractor",
+              1
+            ],
+            [
+              "dissector",
+              1
+            ],
+            [
+              "syringe",
+              1
+            ],
+            [
+              "bowl",
+              2
+            ],
+            [
+              "gauze",
+              7
+            ],
+            [
+              "bandage",
+              1
+            ]
+          ]
+        },
+        {
+          "results": 150,
+          "analyses_per_source_second": 5.0,
+          "p50_capture_to_result_ms": 178.9,
+          "p95_capture_to_result_ms": 216.5,
+          "max_live_overlay_age_ms": null,
+          "stale_overlay_frames": 0,
+          "selections": 150,
+          "skipped_selections": 0,
+          "paused_playback_s": 0.01,
+          "max_concurrent_frame_requests": 1,
+          "dropped_video_frames": 5,
+          "total_video_frames": 1782,
+          "inventory": [
+            [
+              "hemostat",
+              2
+            ],
+            [
+              "scissors",
+              1
+            ],
+            [
+              "retractor",
+              1
+            ],
+            [
+              "dissector",
+              1
+            ],
+            [
+              "syringe",
+              2
+            ],
+            [
+              "bowl",
+              2
+            ],
+            [
+              "gauze",
+              6
+            ],
+            [
+              "bandage",
+              1
+            ]
+          ]
+        }
+      ],
+      "identical_analyzed_timestamps": false,
+      "differing_selections": 13,
+      "same_final_inventory": false
+    }
+  },
+  "freshness_check": {
+    "seen_delayed_status": true,
+    "status": "Scanning",
+    "skipped_selections": 20,
+    "stale_overlay_frames": 165,
+    "max_overlay_pixels_while_delayed": 0,
+    "max_overlay_pixels_while_fresh": 10812,
+    "server_delay": "500 ms added to each response for the first 6 s of a 14 s camera run"
+  },
+  "busy_session_check": {
+    "copies_sent_first": 24,
+    "page_frame_statuses": {
+      "200": 51,
+      "429": 24
+    },
+    "skipped_selections": 24,
+    "state_after": "live"
+  },
+  "late_result_check": {
+    "late_result": {
+      "source_id": "video:f8630a85-ca79-424e-93c5-d72ff6d85bef",
+      "sequence": 0,
+      "captured_at": 0.0,
+      "source_width": 1920,
+      "source_height": 1080,
+      "metadata_origin": "client"
+    },
+    "late_timestamp_in_new_scan": [],
+    "new_scan_results_before_release": 3,
+    "new_scan_results_after_release": 13
+  },
+  "quality": {
+    "method": "pipelines.measure_realtime in process on CUDA, same server code and model, 16 annotated production_v5 eval sessions (1280x720, 10 fps, 60 s), analyzed at the 0.2 s grid",
+    "summary": {
+      "sessions": 16,
+      "analyzed_frames": 4800,
+      "pooled_MOTA": 0.6287857641311934,
+      "mean_IDF1": 0.6959828058300134,
+      "id_switches_total": 477,
+      "id_switches_per_session_median": 30.5,
+      "confirmation_delay_ms": [
+        800.0,
+        800.0,
+        800.0,
+        800.0,
+        800.0,
+        800.0,
+        800.0,
+        800.0,
+        800.0,
+        800.0,
+        800.0,
+        800.0,
+        800.0,
+        800.0,
+        800.0,
+        800.0
+      ],
+      "inventory_mean_absolute_error_per_session": 6.75,
+      "class_exact_match_rate_mean": 0.6442307692307693,
+      "session_exact_match_rate": 0.0625,
+      "ground_truth_items_per_session_mean": 21.25
+    },
+    "per_session": [
+      {
+        "session": "session_000",
+        "tracking": {
+          "MOTA": 0.42587484916393725,
+          "IDF1": 0.4842214772858629,
+          "id_switches": 67,
+          "frames": 300,
+          "gt": 11602,
+          "predictions": 5700,
+          "fp": 346,
+          "fn": 6248
+        },
+        "inventory": {
+          "inventory_ground_truth": 59,
+          "inventory_predictions": 39,
+          "inventory_error": -20,
+          "inventory_absolute_error": 24,
+          "inventory_mean_absolute_error": 1.8461538461538463,
+          "class_exact_match_rate": 0.23076923076923078,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 184.07426681369543
+        }
+      },
+      {
+        "session": "session_001",
+        "tracking": {
+          "MOTA": 0.4981971153846154,
+          "IDF1": 0.5823950870010235,
+          "id_switches": 40,
+          "frames": 300,
+          "gt": 9984,
+          "predictions": 5648,
+          "fp": 317,
+          "fn": 4653
+        },
+        "inventory": {
+          "inventory_ground_truth": 52,
+          "inventory_predictions": 31,
+          "inventory_error": -21,
+          "inventory_absolute_error": 23,
+          "inventory_mean_absolute_error": 1.7692307692307692,
+          "class_exact_match_rate": 0.23076923076923078,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 151.23071894049644
+        }
+      },
+      {
+        "session": "session_002",
+        "tracking": {
+          "MOTA": 0.5770955501897206,
+          "IDF1": 0.6293939710023991,
+          "id_switches": 43,
+          "frames": 300,
+          "gt": 5798,
+          "predictions": 3789,
+          "fp": 200,
+          "fn": 2209
+        },
+        "inventory": {
+          "inventory_ground_truth": 22,
+          "inventory_predictions": 21,
+          "inventory_error": -1,
+          "inventory_absolute_error": 7,
+          "inventory_mean_absolute_error": 0.5384615384615384,
+          "class_exact_match_rate": 0.46153846153846156,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 133.4723448380828
+        }
+      },
+      {
+        "session": "session_003",
+        "tracking": {
+          "MOTA": 0.5395121951219513,
+          "IDF1": 0.6381919553962565,
+          "id_switches": 40,
+          "frames": 300,
+          "gt": 6150,
+          "predictions": 3894,
+          "fp": 268,
+          "fn": 2524
+        },
+        "inventory": {
+          "inventory_ground_truth": 26,
+          "inventory_predictions": 22,
+          "inventory_error": -4,
+          "inventory_absolute_error": 10,
+          "inventory_mean_absolute_error": 0.7692307692307693,
+          "class_exact_match_rate": 0.3076923076923077,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 133.80828127264977
+        }
+      },
+      {
+        "session": "session_004",
+        "tracking": {
+          "MOTA": 0.4879759519038076,
+          "IDF1": 0.4953727773734013,
+          "id_switches": 37,
+          "frames": 300,
+          "gt": 5988,
+          "predictions": 3629,
+          "fp": 335,
+          "fn": 2694
+        },
+        "inventory": {
+          "inventory_ground_truth": 24,
+          "inventory_predictions": 24,
+          "inventory_error": 0,
+          "inventory_absolute_error": 4,
+          "inventory_mean_absolute_error": 0.3076923076923077,
+          "class_exact_match_rate": 0.6923076923076923,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 135.30902471393347
+        }
+      },
+      {
+        "session": "session_005",
+        "tracking": {
+          "MOTA": 0.6007338808317316,
+          "IDF1": 0.6981132075471698,
+          "id_switches": 27,
+          "frames": 300,
+          "gt": 5723,
+          "predictions": 3923,
+          "fp": 229,
+          "fn": 2029
+        },
+        "inventory": {
+          "inventory_ground_truth": 21,
+          "inventory_predictions": 21,
+          "inventory_error": 0,
+          "inventory_absolute_error": 6,
+          "inventory_mean_absolute_error": 0.46153846153846156,
+          "class_exact_match_rate": 0.5384615384615384,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 167.76347160339355
+        }
+      },
+      {
+        "session": "session_006",
+        "tracking": {
+          "MOTA": 0.7564989267827331,
+          "IDF1": 0.6848931841302136,
+          "id_switches": 29,
+          "frames": 300,
+          "gt": 4193,
+          "predictions": 3671,
+          "fp": 235,
+          "fn": 757
+        },
+        "inventory": {
+          "inventory_ground_truth": 14,
+          "inventory_predictions": 17,
+          "inventory_error": 3,
+          "inventory_absolute_error": 3,
+          "inventory_mean_absolute_error": 0.23076923076923078,
+          "class_exact_match_rate": 0.7692307692307693,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 148.59113842248917
+        }
+      },
+      {
+        "session": "session_007",
+        "tracking": {
+          "MOTA": 0.6928400954653937,
+          "IDF1": 0.6551009839461419,
+          "id_switches": 39,
+          "frames": 300,
+          "gt": 4190,
+          "predictions": 3534,
+          "fp": 296,
+          "fn": 952
+        },
+        "inventory": {
+          "inventory_ground_truth": 14,
+          "inventory_predictions": 18,
+          "inventory_error": 4,
+          "inventory_absolute_error": 4,
+          "inventory_mean_absolute_error": 0.3076923076923077,
+          "class_exact_match_rate": 0.7692307692307693,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 133.3664059638977
+        }
+      },
+      {
+        "session": "session_008",
+        "tracking": {
+          "MOTA": 0.9137037037037037,
+          "IDF1": 0.9244076720571643,
+          "id_switches": 3,
+          "frames": 300,
+          "gt": 2700,
+          "predictions": 2618,
+          "fp": 74,
+          "fn": 156
+        },
+        "inventory": {
+          "inventory_ground_truth": 9,
+          "inventory_predictions": 11,
+          "inventory_error": 2,
+          "inventory_absolute_error": 2,
+          "inventory_mean_absolute_error": 0.15384615384615385,
+          "class_exact_match_rate": 0.9230769230769231,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 133.7163643911481
+        }
+      },
+      {
+        "session": "session_009",
+        "tracking": {
+          "MOTA": 0.8725925925925926,
+          "IDF1": 0.8704899354348652,
+          "id_switches": 6,
+          "frames": 300,
+          "gt": 2700,
+          "predictions": 2566,
+          "fp": 102,
+          "fn": 236
+        },
+        "inventory": {
+          "inventory_ground_truth": 9,
+          "inventory_predictions": 9,
+          "inventory_error": 0,
+          "inventory_absolute_error": 0,
+          "inventory_mean_absolute_error": 0.0,
+          "class_exact_match_rate": 1.0,
+          "session_exact_match_rate": 1.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 174.10030215978622
+        }
+      },
+      {
+        "session": "session_010",
+        "tracking": {
+          "MOTA": 0.6861240827218145,
+          "IDF1": 0.6939053455907388,
+          "id_switches": 17,
+          "frames": 300,
+          "gt": 2998,
+          "predictions": 2876,
+          "fp": 401,
+          "fn": 523
+        },
+        "inventory": {
+          "inventory_ground_truth": 10,
+          "inventory_predictions": 14,
+          "inventory_error": 4,
+          "inventory_absolute_error": 4,
+          "inventory_mean_absolute_error": 0.3076923076923077,
+          "class_exact_match_rate": 0.6923076923076923,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 143.79537664353848
+        }
+      },
+      {
+        "session": "session_011",
+        "tracking": {
+          "MOTA": 0.7138513513513514,
+          "IDF1": 0.681054307447373,
+          "id_switches": 32,
+          "frames": 300,
+          "gt": 2960,
+          "predictions": 2693,
+          "fp": 274,
+          "fn": 541
+        },
+        "inventory": {
+          "inventory_ground_truth": 10,
+          "inventory_predictions": 15,
+          "inventory_error": 5,
+          "inventory_absolute_error": 5,
+          "inventory_mean_absolute_error": 0.38461538461538464,
+          "class_exact_match_rate": 0.7692307692307693,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 144.7528935968876
+        }
+      },
+      {
+        "session": "session_012",
+        "tracking": {
+          "MOTA": 0.7317647058823529,
+          "IDF1": 0.7352302345786272,
+          "id_switches": 26,
+          "frames": 300,
+          "gt": 5100,
+          "predictions": 4108,
+          "fp": 175,
+          "fn": 1167
+        },
+        "inventory": {
+          "inventory_ground_truth": 17,
+          "inventory_predictions": 20,
+          "inventory_error": 3,
+          "inventory_absolute_error": 3,
+          "inventory_mean_absolute_error": 0.23076923076923078,
+          "class_exact_match_rate": 0.7692307692307693,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 131.55510369688272
+        }
+      },
+      {
+        "session": "session_013",
+        "tracking": {
+          "MOTA": 0.74,
+          "IDF1": 0.7512942191544435,
+          "id_switches": 32,
+          "frames": 300,
+          "gt": 5100,
+          "predictions": 4172,
+          "fp": 183,
+          "fn": 1111
+        },
+        "inventory": {
+          "inventory_ground_truth": 17,
+          "inventory_predictions": 22,
+          "inventory_error": 5,
+          "inventory_absolute_error": 5,
+          "inventory_mean_absolute_error": 0.38461538461538464,
+          "class_exact_match_rate": 0.6923076923076923,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 138.78861349076033
+        }
+      },
+      {
+        "session": "session_014",
+        "tracking": {
+          "MOTA": 0.8168335187245087,
+          "IDF1": 0.8171957408697382,
+          "id_switches": 21,
+          "frames": 300,
+          "gt": 5394,
+          "predictions": 4655,
+          "fp": 114,
+          "fn": 853
+        },
+        "inventory": {
+          "inventory_ground_truth": 18,
+          "inventory_predictions": 21,
+          "inventory_error": 3,
+          "inventory_absolute_error": 3,
+          "inventory_mean_absolute_error": 0.23076923076923078,
+          "class_exact_match_rate": 0.7692307692307693,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 142.32197497040033
+        }
+      },
+      {
+        "session": "session_015",
+        "tracking": {
+          "MOTA": 0.7674074074074074,
+          "IDF1": 0.7944647944647945,
+          "id_switches": 18,
+          "frames": 300,
+          "gt": 5400,
+          "predictions": 4428,
+          "fp": 133,
+          "fn": 1105
+        },
+        "inventory": {
+          "inventory_ground_truth": 18,
+          "inventory_predictions": 23,
+          "inventory_error": 5,
+          "inventory_absolute_error": 5,
+          "inventory_mean_absolute_error": 0.38461538461538464,
+          "class_exact_match_rate": 0.6923076923076923,
+          "session_exact_match_rate": 0.0
+        },
+        "confirmation": {
+          "selected_sample": 5,
+          "nominal_source_delay_ms": 800.0,
+          "sequential_wall_delay_ms": 139.06892575323582
+        }
+      }
+    ]
+  },
+  "hugging_face_space": "not measured in this round, by the user's decision",
+  "limits": [
+    "4K 60 fps recorded video is not repeatable: two runs analyzed different frames and produced different final inventories",
+    "browser and server share one workstation; the camera is a fake capture device fed from a synthetic video",
+    "tracking quality is measured in process on annotated synthetic sessions, not through the browser",
+    "one session only"
+  ]
+}

@@ -51,6 +51,7 @@ The camera uses a latest-frame scheduler with an overwrite slot, generation chec
 - **affected:** `docs/30-features/H-real-time-inference/`.
 - **verification:** the report lists hardware, model, sources, configuration, metrics, limits, and the pass or fail result.
 - **commit:** `docs: record real-time inference evaluation`
+- **implementation notes:** by the user's decision, the evaluation deployed the branch container on the local workstation GPU, and the Hugging Face Space was not measured. Tracking quality used per-session copies of the merged eval annotations, generated outside the repository, because the measurement tool expects one file per session.
 
 After the last checkpoint, a fresh reviewer checks the real-time inference commits on the branch against the spec. The runtime configuration commits are already reviewed.
 
