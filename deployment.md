@@ -77,7 +77,7 @@
 5. Download the SURGINT robot image.
 
    ```bash
-   docker pull ghcr.io/ahmedghita1/surgint-instruments-robot:0.2.0
+   docker pull ghcr.io/ahmedghita1/surgint-instruments-robot:0.2.1
    ```
 
 6. Check that port `7860` is free.
@@ -105,7 +105,7 @@
      -e SURGINT_ANNOTATED_TOPIC=/surgint_image \
      -e OMP_NUM_THREADS=2 \
      -e MKL_NUM_THREADS=2 \
-     ghcr.io/ahmedghita1/surgint-instruments-robot:0.2.0
+     ghcr.io/ahmedghita1/surgint-instruments-robot:0.2.1
    ```
 
    `docker rm -f` prints an error when no older container exists. That error is harmless.
@@ -202,7 +202,7 @@
 ## Common Failures
 
 - **`unauthorized` while pulling:** The GHCR package is private or Docker is not logged in with a GitHub token that has `read:packages`.
-- **`manifest unknown`:** Image version `0.2.0` was not published successfully.
+- **`manifest unknown`:** Image version `0.2.1` was not published successfully.
 - **Pull stops progressing:** Press `Ctrl+C` and run the same `docker pull` again. Completed layers are kept.
 - **`could not select device driver`:** NVIDIA Container Toolkit is not working.
 - **Port `7860` is occupied:** Stop the conflicting service or run SURGINT with `-e SURGINT_API_PORT=7861` and use port `7861` in the URLs.
