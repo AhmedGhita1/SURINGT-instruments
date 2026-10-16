@@ -25,6 +25,61 @@ ROS 2 HUMBLE TOPICS
   - Type: std_msgs/msg/String
   - Each message contains the unchanged SURGINT frame-response JSON.
 
+DRAFT RESULT CONTEXT
+
+This result interface is a draft until the robot integration colleague confirms the final result topic, message type, and consumer requirements.
+
+SURGINT publishes one JSON response for each camera frame that it selects and successfully processes. The response contains:
+
+- frame identity, camera sequence, source timestamp, and processing timing;
+- detected instruments with label, confidence, bounding box, and tracking ID;
+- newly resolved instrument items with stable item ID and class;
+- a handling outcome of `Recommendation` or `Needs review`, including the proposed action and reason;
+- new inventory entries and current per-class count;
+- current run state, frame count, result count, and timing condition.
+
+The detection, result, and inventory lists can be empty when no instrument is detected or no new item is resolved in that frame.
+
+The current ROS publication is:
+
+- Topic: /surgint/robot_results
+- Type: std_msgs/msg/String
+- Payload: the complete frame-response JSON encoded as the string value.
+
+This output is perception, inventory, and decision-support information. It is not a robot movement, actuation, or safety command. A separate robot component may subscribe to the result topic and decide how to consume the information.
+
+Simplified example payload:
+
+{
+  "detections": [
+    {
+      "track_id": 3,
+      "label": "syringe",
+      "score": 0.91,
+      "box": [120, 80, 310, 260]
+    }
+  ],
+  "new_results": [
+    {
+      "item_id": 7,
+      "label": "syringe",
+      "handling_outcome": "Recommendation",
+      "action": "...",
+      "reason": "..."
+    }
+  ],
+  "new_inventory_entries": [
+    {
+      "label": "syringe",
+      "class_count": 1
+    }
+  ],
+  "status": {
+    "state": "active",
+    "frame_count": 12
+  }
+}
+
 STEP-BY-STEP ROBOT DEPLOYMENT
 
 1. Open a terminal on the robot and load ROS 2 Humble.
