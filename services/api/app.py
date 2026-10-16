@@ -61,6 +61,7 @@ from surgint.runtime.temporal import (
 logger = logging.getLogger(__name__)
 
 CONSOLE = Path(__file__).parent / "static" / "index.html"
+ROBOT_CONSOLE = Path(__file__).parent / "static" / "robot.html"
 
 
 def _elapsed_ms(started_at: float) -> float:
@@ -254,6 +255,11 @@ def create_app(
     def console() -> FileResponse:
         """Serve the page an operator runs a session from."""
         return FileResponse(CONSOLE)
+
+    @application.get("/robot", include_in_schema=False)
+    def robot_console() -> FileResponse:
+        """Serve the robot-run monitoring page."""
+        return FileResponse(ROBOT_CONSOLE)
 
     @application.get("/health/live", response_model=HealthResponse)
     def live() -> HealthResponse:

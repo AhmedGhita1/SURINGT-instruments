@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SURGINT Robot Workflow</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #f3f7f6;
+      --muted: #98aaa6;
+      --panel: #111a19;
+      --panel-soft: #172321;
+      --line: #2a3a37;
+      --accent: #59d7b0;
+      --accent-dark: #092c24;
+      --warning: #ffc66d;
+      --danger: #ff7b83;
+      --blue: #7fc7ff;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 12% 0%, #17332d 0, transparent 32rem),
+        #08100f;
+      color: var(--ink);
+      font: 15px/1.5 Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+    button, select, input { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .45; }
+    .shell { max-width: 1240px; margin: 0 auto; padding: 28px; }
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+    .eyebrow { color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .15em; }
+    h1 { margin: 4px 0 5px; font-size: clamp(28px, 5vw, 44px); letter-spacing: -.04em; }
+    .subtitle { margin: 0; color: var(--muted); max-width: 700px; }
+    .badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+    .badge {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .08em;
+    }
+    .badge.warning { color: #ffe2b3; border-color: #76552a; background: #2c2112; }
+    .grid { display: grid; grid-template-columns: minmax(280px, .72fr) minmax(0, 1.6fr); gap: 18px; }
+    .stack { display: grid; gap: 18px; align-content: start; }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: linear-gradient(155deg, rgba(23,35,33,.96), rgba(13,21,20,.96));
+      box-shadow: 0 18px 50px rgba(0,0,0,.2);
+      overflow: hidden;
+    }
+    .panel-body { padding: 20px; }
+    .panel-title { margin: 0 0 14px; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+    .fields { display: grid; gap: 12px; }
+    label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 700; }
+    select, input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #0b1413;
+      color: var(--ink);
+      padding: 10px 11px;
+    }
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 16px; }
+    .actions .primary { grid-column: 1 / -1; }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel-soft);
+      color: var(--ink);
+      min-height: 42px;
+      padding: 9px 12px;
+      font-weight: 800;
+    }
+    button.primary { background: var(--accent); color: #052018; border-color: var(--accent); }
+    button.danger { color: #ffdadd; border-color: #744148; }
+    .boundary { margin: 15px 0 0; color: var(--muted); font-size: 12px; }
+    .status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+    .state {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border-radius: 999px;
+      background: #0a1714;
+      padding: 7px 10px;
+      font-weight: 800;
+      text-transform: capitalize;
+    }
+    .state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .state.active::before { background: var(--accent); box-shadow: 0 0 0 5px rgba(89,215,176,.12); }
+    .state.degraded::before { background: var(--warning); }
+    .state.failed::before { background: var(--danger); }
+    .timing { color: var(--muted); }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 16px; }
+    .metric { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: #0d1715; }
+    .metric strong { display: block; font-size: 22px; }
+    .metric span { color: var(--muted); font-size: 11px; }
+    .failure { margin-top: 14px; border: 1px solid #743c44; border-radius: 10px; background: #30191c; color: #ffdadd; padding: 11px; }
+    .empty { color: var(--muted); padding: 16px 0; }
+    .latest { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: start; }
+    .latest h2 { margin: 0; font-size: 26px; }
+    .latest p { margin: 4px 0 0; color: var(--muted); }
+    .outcome { border-radius: 999px; padding: 7px 11px; font-weight: 900; white-space: nowrap; }
+    .outcome.recommendation { background: var(--accent-dark); color: var(--accent); }
+    .outcome.review { background: #332716; color: var(--warning); }
+    .guidance { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+    .guidance strong { color: var(--accent); }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 660px; }
+    th, td { text-align: left; border-top: 1px solid var(--line); padding: 11px 14px; vertical-align: top; }
+    th { color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    .review-list { display: grid; gap: 9px; }
+    .review-item { border: 1px solid #564422; border-radius: 10px; background: #211b11; padding: 12px; }
+    .review-item strong { color: var(--warning); }
+    .review-item p { margin: 4px 0 0; color: #d3c6ae; }
+    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .summary div { border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+    .summary strong { display: block; font-size: 20px; }
+    .summary span { color: var(--muted); font-size: 11px; }
+    .hidden { display: none !important; }
+    code { color: var(--blue); word-break: break-all; }
+    @media (max-width: 820px) {
+      .shell { padding: 18px; }
+      header { display: block; }
+      .badges { justify-content: flex-start; margin-top: 14px; }
+      .grid { grid-template-columns: 1fr; }
+      .summary { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">SURGINT · ROBOT WORKFLOW</div>
+        <h1>Instrument run monitor</h1>
+        <p class="subtitle">Incremental instrument inventory and handling guidance from the connected image bridge.</p>
+      </div>
+      <div class="badges">
+        <span class="badge">RESEARCH PROTOTYPE</span>
+        <span class="badge warning">NOT FOR CLINICAL USE</span>
+      </div>
+    </header>
+
+    <div class="grid">
+      <aside class="stack">
+        <section class="panel">
+          <div class="panel-body">
+            <h2 class="panel-title">Run setup</h2>
+            <form id="run-form" class="fields">
+              <label>Workflow stage
+                <select id="workflow-stage">
+                  <option value="post-procedure-clearing">Post-procedure clearing</option>
+                  <option value="pre-procedure-setup">Pre-procedure setup</option>
+                  <option value="in-procedure">In procedure</option>
+                </select>
+              </label>
+              <label>Use state
+                <select id="use-state">
+                  <option value="">Unknown</option>
+                  <option value="unused">Unused</option>
+                  <option value="used">Used</option>
+                </select>
+              </label>
+              <label>Contamination state
+                <select id="contamination-state">
+                  <option value="">Unknown</option>
+                  <option value="not-regulated">Not regulated</option>
+                  <option value="potentially-infectious">Potentially infectious</option>
+                  <option value="chemical">Chemical</option>
+                  <option value="cytotoxic">Cytotoxic</option>
+                  <option value="radioactive">Radioactive</option>
+                </select>
+              </label>
+              <label>Lifecycle
+                <select id="lifecycle">
+                  <option value="">Unknown</option>
+                  <option value="reusable">Reusable</option>
+                  <option value="single-use">Single use</option>
+                </select>
+              </label>
+              <label>Product ID (optional)
+                <input id="product-id" autocomplete="off">
+              </label>
+            </form>
+            <div class="actions">
+              <button id="start-button" class="primary" type="button">Start run</button>
+              <button id="stop-button" class="danger" type="button" disabled>Stop run</button>
+              <button id="release-button" type="button" disabled>Release run</button>
+              <button id="export-button" type="button" disabled>Download JSON</button>
+            </div>
+            <p class="boundary">Handling guidance only. Robot motion, actuation, execution, and safety controls remain outside SURGINT.</p>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-body">
+            <h2 class="panel-title">Run condition</h2>
+            <div class="status-line">
+              <span id="run-state" class="state">Ready</span>
+              <span id="timing-condition" class="timing">Waiting to start</span>
+            </div>
+            <div class="metrics">
+              <div class="metric"><strong id="frame-count">0</strong><span>Analyzed frames</span></div>
+              <div class="metric"><strong id="result-count">0</strong><span>Resolved items</span></div>
+              <div class="metric"><strong id="review-count">0</strong><span>Needs review</span></div>
+            </div>
+            <p>Run ID<br><code id="run-id">Not started</code></p>
+            <div id="failure" class="failure hidden" role="alert"></div>
+          </div>
+        </section>
+      </aside>
+
+      <div class="stack">
+        <section class="panel">
+          <div class="panel-body">
+            <h2 class="panel-title">Latest resolved item</h2>
+            <div id="latest-empty" class="empty">No confirmed item has resolved in this run.</div>
+            <div id="latest-result" class="hidden"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-body">
+            <h2 class="panel-title">Unresolved confirmed evidence</h2>
+            <div id="review-empty" class="empty">No confirmed item currently needs review.</div>
+            <div id="review-list" class="review-list"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-body">
+            <h2 class="panel-title">Append-only inventory</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Sequence</th><th>Instrument</th><th>Class count</th><th>Source time</th><th>Outcome</th></tr></thead>
+              <tbody id="inventory-body"><tr><td colspan="5" class="empty">Inventory is empty.</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="summary-panel" class="panel hidden">
+          <div class="panel-body">
+            <h2 class="panel-title">Stopped run summary</h2>
+            <div class="summary">
+              <div><strong id="summary-frames">0</strong><span>Analyzed frames</span></div>
+              <div><strong id="summary-items">0</strong><span>Resolved items</span></div>
+              <div><strong id="summary-review">0</strong><span>Needs review</span></div>
+              <div><strong id="summary-duration">0.0 s</strong><span>Run duration</span></div>
+            </div>
+            <p class="boundary">Review every outcome before authorizing any action outside SURGINT. Exported results are research records, not clinical or safety-critical reconciliation.</p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script>
+  (() => {
+    const POLL_INTERVAL_MS = 250;
+    const apiBase = new URLSearchParams(location.search).get("api") || location.origin;
+    const byId = (id) => document.getElementById(id);
+    const apiUrl = (path) => new URL(path, apiBase).toString();
+    let runId = null;
+    let pollTimer = null;
+    let pollInFlight = false;
+    let terminal = false;
+    let lastResults = [];
+
+    const startButton = byId("start-button");
+    const stopButton = byId("stop-button");
+    const releaseButton = byId("release-button");
+    const exportButton = byId("export-button");
+
+    function optionalValue(id) {
+      const value = byId(id).value.trim();
+      return value || null;
+    }
+
+    function setFailure(message) {
+      const failure = byId("failure");
+      failure.textContent = message || "";
+      failure.classList.toggle("hidden", !message);
+    }
+
+    function humanize(value) {
+      return String(value || "").replaceAll("-", " ");
+    }
+
+    function renderStatus(status, results) {
+      const state = byId("run-state");
+      state.textContent = humanize(status.state);
+      state.className = `state ${status.state}`;
+      byId("timing-condition").textContent = humanize(status.timing_condition);
+      byId("frame-count").textContent = status.frame_count;
+      byId("result-count").textContent = status.result_count;
+      byId("review-count").textContent = results.filter(
+        (result) => result.handling_outcome === "Needs review"
+      ).length;
+      byId("run-id").textContent = status.run_id;
+      setFailure(status.failure);
+      terminal = status.state === "stopped" || status.state === "failed";
+      stopButton.disabled = terminal;
+      releaseButton.disabled = !terminal;
+      if (terminal) stopPolling();
+    }
+
+    function renderLatest(results) {
+      const empty = byId("latest-empty");
+      const container = byId("latest-result");
+      const result = results.length ? results[results.length - 1] : null;
+      empty.classList.toggle("hidden", Boolean(result));
+      container.classList.toggle("hidden", !result);
+      if (!result) return;
+      const recommendation = result.handling_outcome === "Recommendation";
+      const guidance = recommendation
+        ? `<strong>Handling guidance:</strong> ${result.action}`
+        : `<strong>Review reason:</strong> ${result.reason}<br>No action issued.`;
+      container.innerHTML = `
+        <div class="latest">
+          <div><h2>${result.label}</h2><p>Item ${result.item_id} · confidence ${(result.confidence * 100).toFixed(1)}% · source ${result.captured_at.toFixed(3)} s</p></div>
+          <span class="outcome ${recommendation ? "recommendation" : "review"}">${result.handling_outcome}</span>
+        </div>
+        <div class="guidance">${guidance}</div>`;
+    }
+
+    function renderReviews(results) {
+      const reviews = results.filter(
+        (result) => result.handling_outcome === "Needs review"
+      );
+      byId("review-empty").classList.toggle("hidden", reviews.length > 0);
+      byId("review-list").innerHTML = reviews.map((result) => `
+        <article class="review-item">
+          <strong>${result.label} · item ${result.item_id}</strong>
+          <p>${result.reason}</p>
+          <p>Confidence ${(result.confidence * 100).toFixed(1)}% · source ${result.captured_at.toFixed(3)} s · no action issued</p>
+        </article>`).join("");
+    }
+
+    function renderInventory(inventory) {
+      const body = byId("inventory-body");
+      if (!inventory.length) {
+        body.innerHTML = '<tr><td colspan="5" class="empty">Inventory is empty.</td></tr>';
+        return;
+      }
+      body.innerHTML = inventory.map((entry) => `
+        <tr>
+          <td>${entry.resolution_sequence}</td>
+          <td>${entry.label} <span class="timing">(item ${entry.item_id})</span></td>
+          <td>${entry.class_count}</td>
+          <td>${entry.captured_at.toFixed(3)} s</td>
+          <td>${entry.handling_outcome}</td>
+        </tr>`).join("");
+    }
+
+    function renderRun(payload) {
+      lastResults = payload.results;
+      renderStatus(payload.status, payload.results);
+      renderLatest(payload.results);
+      renderReviews(payload.results);
+      renderInventory(payload.inventory);
+    }
+
+    function renderSummary(summary) {
+      lastResults = summary.results;
+      renderLatest(summary.results);
+      renderReviews(summary.results);
+      renderInventory(summary.inventory);
+      byId("run-state").textContent = "Stopped";
+      byId("run-state").className = "state stopped";
+      byId("timing-condition").textContent = "terminal";
+      byId("frame-count").textContent = summary.frame_count;
+      byId("result-count").textContent = summary.results.length;
+      const reviews = summary.results.filter(
+        (result) => result.handling_outcome === "Needs review"
+      ).length;
+      byId("review-count").textContent = reviews;
+      byId("summary-frames").textContent = summary.frame_count;
+      byId("summary-items").textContent = summary.results.length;
+      byId("summary-review").textContent = reviews;
+      byId("summary-duration").textContent = `${(summary.ended_at - summary.started_at).toFixed(1)} s`;
+      byId("summary-panel").classList.remove("hidden");
+      terminal = true;
+      stopButton.disabled = true;
+      releaseButton.disabled = false;
+      exportButton.disabled = false;
+      stopPolling();
+    }
+
+    async function responseJson(response) {
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `Request failed (${response.status})`);
+      return payload;
+    }
+
+    async function startRun() {
+      startButton.disabled = true;
+      setFailure("");
+      const request = {
+        workflow_stage: byId("workflow-stage").value,
+        use_state: optionalValue("use-state"),
+        contamination_state: optionalValue("contamination-state"),
+        lifecycle: optionalValue("lifecycle"),
+        product_id: optionalValue("product-id"),
+      };
+      try {
+        const payload = await responseJson(await fetch(apiUrl("/v1/robot-runs"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request),
+        }));
+        runId = payload.status.run_id;
+        terminal = false;
+        stopButton.disabled = false;
+        releaseButton.disabled = true;
+        exportButton.disabled = true;
+        byId("summary-panel").classList.add("hidden");
+        renderRun(payload);
+        schedulePoll(0);
+      } catch (error) {
+        setFailure(error.message);
+        startButton.disabled = false;
+      }
+    }
+
+    async function pollRun() {
+      if (!runId || terminal || pollInFlight) return;
+      pollInFlight = true;
+      try {
+        const payload = await responseJson(await fetch(apiUrl(`/v1/robot-runs/${runId}`)));
+        renderRun(payload);
+      } catch (error) {
+        setFailure(error.message);
+      } finally {
+        pollInFlight = false;
+        if (runId && !terminal) schedulePoll(POLL_INTERVAL_MS);
+      }
+    }
+
+    function schedulePoll(delay) {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(pollRun, delay);
+    }
+
+    function stopPolling() {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+
+    async function stopRun() {
+      stopButton.disabled = true;
+      try {
+        const summary = await responseJson(await fetch(
+          apiUrl(`/v1/robot-runs/${runId}/stop`), { method: "POST" }
+        ));
+        renderSummary(summary);
+      } catch (error) {
+        setFailure(error.message);
+        stopButton.disabled = false;
+      }
+    }
+
+    async function releaseRun() {
+      releaseButton.disabled = true;
+      try {
+        await responseJsonOrEmpty(await fetch(apiUrl(`/v1/robot-runs/${runId}`), {
+          method: "DELETE",
+        }));
+        runId = null;
+        terminal = false;
+        lastResults = [];
+        startButton.disabled = false;
+        stopButton.disabled = true;
+        exportButton.disabled = true;
+        byId("run-state").textContent = "Ready";
+        byId("run-state").className = "state";
+        byId("timing-condition").textContent = "Waiting to start";
+        byId("frame-count").textContent = "0";
+        byId("result-count").textContent = "0";
+        byId("review-count").textContent = "0";
+        byId("run-id").textContent = "Not started";
+        byId("summary-panel").classList.add("hidden");
+        setFailure("");
+        renderLatest([]);
+        renderReviews([]);
+        renderInventory([]);
+      } catch (error) {
+        setFailure(error.message);
+        releaseButton.disabled = false;
+      }
+    }
+
+    async function responseJsonOrEmpty(response) {
+      if (response.ok) return null;
+      return responseJson(response);
+    }
+
+    function exportRun() {
+      const link = document.createElement("a");
+      link.href = apiUrl(`/v1/robot-runs/${runId}/export`);
+      link.download = `surgint-robot-run-${runId}.json`;
+      link.click();
+    }
+
+    startButton.addEventListener("click", startRun);
+    stopButton.addEventListener("click", stopRun);
+    releaseButton.addEventListener("click", releaseRun);
+    exportButton.addEventListener("click", exportRun);
+    window.surgintRobot = {
+      get runId() { return runId; },
+      get results() { return lastResults.slice(); },
+      refresh: pollRun,
+    };
+  })();
+  </script>
+</body>
+</html>
