@@ -86,3 +86,113 @@ class FinalizedItemResponse(BaseModel):
 class FinalizedSessionResponse(BaseModel):
     frame_count: int
     items: list[FinalizedItemResponse]
+
+
+class StartRobotRunRequest(BaseModel):
+    workflow_stage: Literal[
+        "pre-procedure-setup",
+        "in-procedure",
+        "post-procedure-clearing",
+    ]
+    use_state: Literal["unused", "used"] | None = None
+    contamination_state: Literal[
+        "not-regulated",
+        "potentially-infectious",
+        "chemical",
+        "cytotoxic",
+        "radioactive",
+    ] | None = None
+    product_id: str | None = None
+    lifecycle: Literal["reusable", "single-use"] | None = None
+
+
+class RobotItemResultResponse(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: UUID
+    item_id: int
+    class_id: int
+    label: str
+    confidence: float
+    resolution_sequence: int
+    source_id: str
+    source_sequence: int
+    captured_at: float
+    handling_outcome: Literal["Recommendation", "Needs review"]
+    workflow_stage: str
+    decision_intent: str
+    decision_outcome: str
+    concept_iri: str | None
+    lifecycle: str | None
+    sharp_hazard: str | None
+    roles: list[str]
+    action: str | None
+    matched_rule: str | None
+    missing_fields: list[str]
+    reason: str
+    perception_version: str
+    ontology_version: str
+    policy_id: str
+    policy_version: str
+
+
+class RobotInventoryEntryResponse(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: UUID
+    item_id: int
+    class_id: int
+    label: str
+    resolution_sequence: int
+    captured_at: float
+    class_count: int
+    handling_outcome: Literal["Recommendation", "Needs review"]
+    action: str | None
+    reason: str
+
+
+class RobotRunStatusResponse(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: UUID
+    state: Literal["ready", "active", "degraded", "failed", "stopped"]
+    timing_condition: Literal[
+        "waiting-for-image",
+        "current",
+        "analysis-delayed",
+        "image-stream-stopped",
+        "terminal",
+    ]
+    frame_count: int
+    result_count: int
+    latest_received_source_at: float | None
+    latest_analyzed_source_at: float | None
+    failure: str | None
+
+
+class RobotRunResponse(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    status: RobotRunStatusResponse
+    results: list[RobotItemResultResponse]
+    inventory: list[RobotInventoryEntryResponse]
+
+
+class RobotFrameProcessedResponse(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    frame: FrameIdentityResponse
+    timing: ResultTimingResponse
+    detections: list[TrackedDetectionResponse]
+    status: RobotRunStatusResponse
+    new_results: list[RobotItemResultResponse]
+    new_inventory_entries: list[RobotInventoryEntryResponse]
+
+
+class RobotRunSummaryResponse(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    research_warning: Literal[
+        "Research prototype only. Not for clinical use or safety-critical instrument accounting."
+    ] = "Research prototype only. Not for clinical use or safety-critical instrument accounting."
+    run_id: UUID
+    state: Literal["stopped"]
+    started_at: float
+    ended_at: float
+    frame_count: int
+    results: list[RobotItemResultResponse]
+    inventory: list[RobotInventoryEntryResponse]
