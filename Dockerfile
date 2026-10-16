@@ -36,6 +36,9 @@ FROM runtime AS robot-runtime
 
 USER root
 
+# tzdata otherwise waits for a time zone answer during the build.
+ARG DEBIAN_FRONTEND=noninteractive
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
     && curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
