@@ -32,7 +32,7 @@ A robot operator can pull and run a dedicated SURGINT robot image that starts th
 
 - Start one API worker and one bridge process, and stop the container if either process exits.
 - The bridge discovers the current non-terminal robot run, skips images while no run exists, and reconnects after release and restart.
-- Keep the camera, result, and annotated-image topics configurable, with `/camera/image_raw`, `/surgint/robot_results`, and `/surgint/annotated_image` as defaults.
+- Keep the camera, result, and annotated-image topics configurable, with `/camera/image_raw`, `/surgint/robot_results`, and `/surgint_image` as defaults.
 
 **verification:** Runtime tests cover active-run discovery, no-run behavior, terminal-run behavior, process startup, and clean shutdown.
 

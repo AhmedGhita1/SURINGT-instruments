@@ -28,7 +28,7 @@ def main() -> None:
     annotated: list[Image] = []
     node.create_subscription(
         Image,
-        "/surgint/annotated_image",
+        "/surgint_image",
         annotated.append,
         2,
     )

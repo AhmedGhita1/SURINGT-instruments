@@ -59,7 +59,7 @@ COPY --chown=surgint:surgint docker/robot/fastrtps-profile.xml /app/docker/robot
 ENV SURGINT_API_PORT=7860 \
     SURGINT_IMAGE_TOPIC=/camera/image_raw \
     SURGINT_RESULT_TOPIC=/surgint/robot_results \
-    SURGINT_ANNOTATED_TOPIC=/surgint/annotated_image \
+    SURGINT_ANNOTATED_TOPIC=/surgint_image \
     FASTRTPS_DEFAULT_PROFILES_FILE=/app/docker/robot/fastrtps-profile.xml \
     FASTDDS_DEFAULT_PROFILES_FILE=/app/docker/robot/fastrtps-profile.xml
 
