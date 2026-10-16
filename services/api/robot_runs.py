@@ -83,6 +83,10 @@ class RobotRunRegistry:
                 return None
             return run
 
+    def current(self) -> ActiveRobotRun | None:
+        with self._lock:
+            return self._run
+
     def release(self, run_id: UUID) -> ActiveRobotRun | None:
         with self._lock:
             run = self._run

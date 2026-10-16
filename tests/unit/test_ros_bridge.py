@@ -1,15 +1,33 @@
 import json
+from io import BytesIO
 from threading import Event, Lock
 from types import SimpleNamespace
+from urllib.error import HTTPError
+from uuid import uuid4
 
 from PIL import Image
 
 from bridge.ros.surgint_robot_bridge import (
+    ActiveRobotRunClient,
     FrameBridge,
     FramePostError,
     SourceTimeSelector,
     encode_sensor_image,
 )
+
+
+class FakeResponse:
+    def __init__(self, payload: dict) -> None:
+        self._payload = json.dumps(payload).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args) -> None:
+        pass
+
+    def read(self) -> bytes:
+        return self._payload
 
 
 def encoded_image() -> tuple[bytes, str, str]:
@@ -81,6 +99,70 @@ def test_bridge_counts_http_429_as_a_skipped_image():
 
     assert bridge.stats.skipped_http_429 == 1
     assert bridge.stats.skipped_images == 1
+    assert bridge.stats.post_failures == 0
+    bridge.close()
+
+
+def test_active_client_skips_images_until_a_run_exists(monkeypatch):
+    def no_active_run(request, timeout):
+        raise HTTPError(request.full_url, 404, "not found", {}, BytesIO(b"{}"))
+
+    monkeypatch.setattr(
+        "bridge.ros.surgint_robot_bridge.urlopen",
+        no_active_run,
+    )
+    client = ActiveRobotRunClient("http://127.0.0.1:7860")
+    bridge = FrameBridge(client.post_frame, lambda _payload: None)
+
+    assert offer(bridge, 0, 0.0)
+    assert bridge.wait_until_idle(1.0)
+
+    assert bridge.stats.skipped_no_active_run == 1
+    assert bridge.stats.skipped_images == 1
+    assert bridge.stats.post_failures == 0
+    bridge.close()
+
+
+def test_active_client_discovers_a_replacement_after_a_run_ends(monkeypatch):
+    first_run_id = uuid4()
+    second_run_id = uuid4()
+    requested_urls = []
+    responses = iter(
+        (
+            FakeResponse({"status": {"run_id": str(first_run_id)}}),
+            HTTPError("frame", 409, "stopped", {}, BytesIO(b"{}")),
+            FakeResponse({"status": {"run_id": str(second_run_id)}}),
+            FakeResponse({"new_results": [], "new_inventory_entries": []}),
+        )
+    )
+
+    def urlopen_response(request, timeout):
+        requested_urls.append(request.full_url)
+        response = next(responses)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(
+        "bridge.ros.surgint_robot_bridge.urlopen",
+        urlopen_response,
+    )
+    client = ActiveRobotRunClient("http://127.0.0.1:7860")
+    bridge = FrameBridge(client.post_frame, lambda _payload: None)
+
+    assert offer(bridge, 0, 0.0)
+    assert bridge.wait_until_idle(1.0)
+    assert offer(bridge, 1, 0.2)
+    assert bridge.wait_until_idle(1.0)
+
+    assert requested_urls == [
+        "http://127.0.0.1:7860/v1/robot-runs/active",
+        f"http://127.0.0.1:7860/v1/robot-runs/{first_run_id}/frames",
+        "http://127.0.0.1:7860/v1/robot-runs/active",
+        f"http://127.0.0.1:7860/v1/robot-runs/{second_run_id}/frames",
+    ]
+    assert bridge.stats.skipped_no_active_run == 1
+    assert bridge.stats.posted_images == 1
     assert bridge.stats.post_failures == 0
     bridge.close()
 

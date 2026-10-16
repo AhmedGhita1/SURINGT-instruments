@@ -47,17 +47,26 @@ class BridgeStats:
     published_responses: int = 0
     skipped_busy: int = 0
     skipped_http_429: int = 0
+    skipped_no_active_run: int = 0
     post_failures: int = 0
 
     @property
     def skipped_images(self) -> int:
-        return self.skipped_busy + self.skipped_http_429
+        return (
+            self.skipped_busy
+            + self.skipped_http_429
+            + self.skipped_no_active_run
+        )
 
 
 class FramePostError(RuntimeError):
     def __init__(self, status_code: int | None, detail: str) -> None:
         super().__init__(detail)
         self.status_code = status_code
+
+
+class NoActiveRobotRun(RuntimeError):
+    """The API has no non-terminal robot run to receive images."""
 
 
 def _multipart_body(
@@ -141,6 +150,45 @@ class RobotRunClient:
         return payload
 
 
+class ActiveRobotRunClient:
+    """Discover and post to the current non-terminal robot run."""
+
+    def __init__(self, api_base: str, timeout_seconds: float = 10.0) -> None:
+        self._api_base = api_base.rstrip("/")
+        self._active_url = f"{self._api_base}/v1/robot-runs/active"
+        self._timeout_seconds = timeout_seconds
+        self._client: RobotRunClient | None = None
+
+    def _discover(self) -> RobotRunClient:
+        request = Request(self._active_url, method="GET")
+        try:
+            with urlopen(request, timeout=self._timeout_seconds) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            if error.code == 404:
+                raise NoActiveRobotRun("no active robot run") from error
+            detail = error.read().decode("utf-8", errors="replace")
+            raise FramePostError(error.code, detail) from error
+        except URLError as error:
+            raise FramePostError(None, str(error.reason)) from error
+        try:
+            run_id = UUID(payload["status"]["run_id"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise FramePostError(None, "active-run response has no valid run id") from error
+        return RobotRunClient(self._api_base, run_id, self._timeout_seconds)
+
+    def post_frame(self, **frame) -> str:
+        if self._client is None:
+            self._client = self._discover()
+        try:
+            return self._client.post_frame(**frame)
+        except FramePostError as error:
+            if error.status_code in {404, 409}:
+                self._client = None
+                raise NoActiveRobotRun("active robot run ended") from error
+            raise
+
+
 class FrameBridge:
     """Apply selection and run at most one frame request in a background thread."""
 
@@ -218,6 +266,9 @@ class FrameBridge:
             with self._lock:
                 self.stats.posted_images += 1
                 self.stats.published_responses += 1
+        except NoActiveRobotRun:
+            with self._lock:
+                self.stats.skipped_no_active_run += 1
         except FramePostError as error:
             with self._lock:
                 if error.status_code == 429:
@@ -306,7 +357,11 @@ def encode_sensor_image(message) -> tuple[bytes, str, str]:
 
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-id", required=True, type=UUID)
+    parser.add_argument(
+        "--run-id",
+        type=UUID,
+        help="fixed robot run; omit to discover the current active run",
+    )
     parser.add_argument("--api-base", default=DEFAULT_API_BASE)
     parser.add_argument("--image-topic", default=DEFAULT_IMAGE_TOPIC)
     parser.add_argument("--result-topic", default=DEFAULT_RESULT_TOPIC)
@@ -317,6 +372,7 @@ def main(argv: list[str] | None = None) -> None:
     args, ros_args = parse_args(argv)
 
     import rclpy
+    from rclpy.executors import ExternalShutdownException
     from rclpy.node import Node
     from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import Image
@@ -328,7 +384,12 @@ def main(argv: list[str] | None = None) -> None:
         def __init__(self) -> None:
             super().__init__("surgint_robot_image_bridge")
             self._result_publisher = self.create_publisher(String, args.result_topic, 10)
-            client = RobotRunClient(args.api_base, args.run_id)
+            if args.run_id is None:
+                client = ActiveRobotRunClient(args.api_base)
+                run_target = "the current active run"
+            else:
+                client = RobotRunClient(args.api_base, args.run_id)
+                run_target = f"run {args.run_id}"
             self._bridge = FrameBridge(
                 client.post_frame,
                 self._publish_response,
@@ -342,7 +403,7 @@ def main(argv: list[str] | None = None) -> None:
                 qos_profile_sensor_data,
             )
             self.get_logger().info(
-                f"bridging {args.image_topic} to run {args.run_id}; "
+                f"bridging {args.image_topic} to {run_target}; "
                 f"publishing responses on {args.result_topic}"
             )
 
@@ -370,6 +431,7 @@ def main(argv: list[str] | None = None) -> None:
                 f"posted={stats.posted_images} skipped={stats.skipped_images} "
                 f"skipped_busy={stats.skipped_busy} "
                 f"skipped_http_429={stats.skipped_http_429} "
+                f"skipped_no_active_run={stats.skipped_no_active_run} "
                 f"failures={stats.post_failures}"
             )
             if rclpy.ok():
@@ -381,7 +443,7 @@ def main(argv: list[str] | None = None) -> None:
     node = SurgintRobotBridgeNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

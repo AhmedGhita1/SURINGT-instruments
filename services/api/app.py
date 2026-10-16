@@ -333,6 +333,26 @@ def create_app(
         return _robot_run_response(run, perf_counter())
 
     @application.get(
+        "/v1/robot-runs/active",
+        response_model=RobotRunResponse,
+    )
+    def get_active_robot_run() -> RobotRunResponse:
+        run = application.state.robot_runs.current()
+        if run is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="no active robot run",
+            )
+        with run.lock:
+            current_status = run.coordinator.status(perf_counter())
+            if current_status.state in {RobotRunState.FAILED, RobotRunState.STOPPED}:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="no active robot run",
+                )
+            return _robot_run_response(run, perf_counter())
+
+    @application.get(
         "/v1/robot-runs/{run_id}",
         response_model=RobotRunResponse,
     )

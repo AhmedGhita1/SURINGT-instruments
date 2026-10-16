@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ["v*", "robot-v*"]
 
 jobs:
   test:
@@ -60,6 +60,7 @@ jobs:
       - run: python .github/scripts/ci_checkpoint.py models/ci
 
       - run: docker build --target ci -t surgint:ci .
+      - run: docker build --target robot-ci -t surgint:robot-ci .
 
       - name: start the container
         run: |
@@ -78,6 +79,22 @@ jobs:
           echo "the api did not become ready"
           exit 1
 
+      - name: start the robot container
+        run: |
+          docker run -d --name surgint-robot-ci \
+            -e DEVICE=cpu \
+            -e SURGINT_API_PORT=7861 \
+            -p 127.0.0.1:8001:7861 \
+            surgint:robot-ci
+          for _ in $(seq 90); do
+            if curl -fsS -m 2 http://127.0.0.1:8001/health/ready > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "the robot api did not become ready"
+          exit 1
+
 
       - name: the image serves the installed package
         run: |
@@ -88,10 +105,20 @@ jobs:
             *) echo "a source copy in the image shadows the installed package"; exit 1 ;;
           esac
 
+      - name: the robot image contains ROS and runs as non-root
+        run: |
+          test "$(docker exec surgint-robot-ci id -u)" = 1000
+          docker exec surgint-robot-ci python -c 'import services, surgint'
+          docker exec surgint-robot-ci bash -lc \
+            'source /opt/ros/humble/setup.bash && /usr/bin/python3 -c "import rclpy; from sensor_msgs.msg import Image; from std_msgs.msg import String"'
+
       - run: bash docker/smoke.sh
+      - run: BASE=http://127.0.0.1:8001 bash docker/robot/smoke.sh
 
       - if: always()
-        run: docker logs surgint-ci
+        run: |
+          docker logs surgint-ci
+          docker logs surgint-robot-ci
 
   publish-image:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -124,6 +151,41 @@ jobs:
           test -n "$HF_MODEL_REVISION"
           version="${GITHUB_REF_NAME#v}"
           docker build --target production \
+            --build-arg "HF_MODEL_ID=$HF_MODEL_ID" \
+            --build-arg "HF_MODEL_REVISION=$HF_MODEL_REVISION" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --tag "$IMAGE_NAME:$version" \
+            --tag "$IMAGE_NAME:latest" .
+          docker push "$IMAGE_NAME:$version"
+          docker push "$IMAGE_NAME:latest"
+
+  publish-robot-image:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/robot-v')
+    needs: [test, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_NAME: ghcr.io/ahmedghita1/surgint-instruments-robot
+      HF_MODEL_ID: AhmedGhita/surgint-instruments-rt-detr
+      HF_MODEL_REVISION: ${{ vars.HF_MODEL_REVISION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: log in to the GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build and publish the robot image
+        run: |
+          test -n "$HF_MODEL_REVISION"
+          version="${GITHUB_REF_NAME#robot-v}"
+          test -n "$version"
+          docker build --target robot-production \
             --build-arg "HF_MODEL_ID=$HF_MODEL_ID" \
             --build-arg "HF_MODEL_REVISION=$HF_MODEL_REVISION" \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \

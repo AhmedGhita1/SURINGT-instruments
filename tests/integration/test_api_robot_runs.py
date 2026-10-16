@@ -60,6 +60,7 @@ def test_robot_run_lifecycle_exports_summary_and_restarts_in_isolation(
     )
 
     with TestClient(application) as client:
+        assert client.get("/v1/robot-runs/active").status_code == 404
         started = client.post("/v1/robot-runs", json=start_request())
         assert started.status_code == 201
         run_id = UUID(started.json()["status"]["run_id"])
@@ -67,6 +68,9 @@ def test_robot_run_lifecycle_exports_summary_and_restarts_in_isolation(
         assert started.json()["status"]["state"] == "active"
         assert started.json()["results"] == []
         assert first_run.pipeline.detector is detector
+        active = client.get("/v1/robot-runs/active")
+        assert active.status_code == 200
+        assert UUID(active.json()["status"]["run_id"]) == run_id
 
         conflict = client.post("/v1/robot-runs", json=start_request())
         assert conflict.status_code == 409
@@ -97,6 +101,7 @@ def test_robot_run_lifecycle_exports_summary_and_restarts_in_isolation(
         assert stopped.status_code == 200
         assert stopped.json()["state"] == "stopped"
         assert stopped.json()["frame_count"] == 1
+        assert client.get("/v1/robot-runs/active").status_code == 404
 
         rejected = post_frame(client, run_id, sequence=1, captured_at=1.2)
         assert rejected.status_code == 409
@@ -121,6 +126,8 @@ def test_robot_run_lifecycle_exports_summary_and_restarts_in_isolation(
         assert restarted_run.pipeline.detector is first_run.pipeline.detector
         assert restarted.json()["status"]["frame_count"] == 0
         assert restarted.json()["results"] == []
+        active = client.get("/v1/robot-runs/active")
+        assert UUID(active.json()["status"]["run_id"]) == restarted_id
 
 
 def test_robot_run_requires_readiness_and_recoverable_input_stays_active() -> None:

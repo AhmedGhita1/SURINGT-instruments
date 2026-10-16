@@ -37,11 +37,14 @@ def test_registry_retains_one_run_until_release():
     first = active_run()
     second = active_run()
 
+    assert registry.current() is None
     assert registry.add(first)
+    assert registry.current() is first
     assert not registry.add(second)
     assert registry.get(first.coordinator.run_id) is first
     assert registry.get(second.coordinator.run_id) is None
     assert registry.release(first.coordinator.run_id) is first
+    assert registry.current() is None
     assert registry.add(second)
     assert second.pipeline is not first.pipeline
     assert second.pipeline.tracker is not first.pipeline.tracker

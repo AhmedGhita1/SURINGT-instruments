@@ -32,11 +32,52 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=120s --retries=3 \
 CMD ["python", "-m", "uvicorn", "services.api.app:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]
 
 
+FROM runtime AS robot-runtime
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+        | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
+        > /etc/apt/sources.list.d/ros2.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ros-humble-rclpy \
+        ros-humble-rmw-fastrtps-cpp \
+        ros-humble-sensor-msgs \
+        ros-humble-std-msgs \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --chown=surgint:surgint bridge/ros/surgint_robot_bridge.py /app/bridge/ros/surgint_robot_bridge.py
+COPY --chown=surgint:surgint docker/robot/entrypoint.sh /app/docker/robot/entrypoint.sh
+COPY --chown=surgint:surgint docker/robot/fastrtps-profile.xml /app/docker/robot/fastrtps-profile.xml
+
+ENV SURGINT_API_PORT=7860 \
+    SURGINT_IMAGE_TOPIC=/camera/image_raw \
+    SURGINT_RESULT_TOPIC=/surgint/robot_results \
+    FASTRTPS_DEFAULT_PROFILES_FILE=/app/docker/robot/fastrtps-profile.xml \
+    FASTDDS_DEFAULT_PROFILES_FILE=/app/docker/robot/fastrtps-profile.xml
+
+USER surgint
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=120s --retries=3 \
+    CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ['SURGINT_API_PORT'] + '/health/ready', timeout=2)"]
+
+CMD ["/bin/bash", "/app/docker/robot/entrypoint.sh"]
+
+
 # CI uses a generated checkpoint and requires no deployment secret.
 FROM scratch AS ci-model
 COPY models/ci/ /model/
 
 FROM runtime AS ci
+COPY --from=ci-model --chown=surgint:surgint /model/ /app/models/surgint-instruments-rt-detr/
+RUN python -c "from services.api.settings import DEFAULT_CHECKPOINT; from surgint.artifacts import ModelManifest; ModelManifest.load(DEFAULT_CHECKPOINT)"
+
+
+FROM robot-runtime AS robot-ci
 COPY --from=ci-model --chown=surgint:surgint /model/ /app/models/surgint-instruments-rt-detr/
 RUN python -c "from services.api.settings import DEFAULT_CHECKPOINT; from surgint.artifacts import ModelManifest; ModelManifest.load(DEFAULT_CHECKPOINT)"
 
@@ -55,5 +96,10 @@ RUN test -n "${HF_MODEL_ID}" \
 
 
 FROM runtime AS production
+COPY --from=release-model --chown=surgint:surgint /model/ /app/models/surgint-instruments-rt-detr/
+RUN python -c "from services.api.settings import DEFAULT_CHECKPOINT; from surgint.artifacts import ModelManifest; ModelManifest.load(DEFAULT_CHECKPOINT)"
+
+
+FROM robot-runtime AS robot-production
 COPY --from=release-model --chown=surgint:surgint /model/ /app/models/surgint-instruments-rt-detr/
 RUN python -c "from services.api.settings import DEFAULT_CHECKPOINT; from surgint.artifacts import ModelManifest; ModelManifest.load(DEFAULT_CHECKPOINT)"

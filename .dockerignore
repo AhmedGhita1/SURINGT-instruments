@@ -8,6 +8,13 @@
 !surgint/**
 !services/
 !services/**
+!bridge/
+!bridge/ros/
+!bridge/ros/surgint_robot_bridge.py
+!docker/
+!docker/robot/
+!docker/robot/entrypoint.sh
+!docker/robot/fastrtps-profile.xml
 !models/
 !models/ci/
 !models/ci/**
