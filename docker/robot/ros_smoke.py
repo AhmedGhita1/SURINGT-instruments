@@ -1,4 +1,4 @@
-"""Publish ROS images and require one robot-result response."""
+"""Publish ROS images and require one robot-result response and one annotated image."""
 
 import json
 from array import array
@@ -25,6 +25,13 @@ def main() -> None:
         lambda message: responses.append(message.data),
         10,
     )
+    annotated: list[Image] = []
+    node.create_subscription(
+        Image,
+        "/surgint/annotated_image",
+        annotated.append,
+        2,
+    )
 
     started_at = monotonic()
     while publisher.get_subscription_count() == 0 and monotonic() - started_at < 10.0:
@@ -34,7 +41,7 @@ def main() -> None:
 
     sequence = 0
     next_publish_at = started_at
-    while not responses and monotonic() - started_at < TIMEOUT_SECONDS:
+    while not (responses and annotated) and monotonic() - started_at < TIMEOUT_SECONDS:
         now = monotonic()
         if now >= next_publish_at:
             message = Image()
@@ -58,7 +65,14 @@ def main() -> None:
     payload = json.loads(responses[0])
     if payload["frame"]["source_id"] != "ros2-camera":
         raise SystemExit("result did not preserve the ROS source identity")
-    print("ROS image reached the active run and its response returned on the result topic")
+    if not annotated:
+        raise SystemExit("no annotated image received")
+    image = annotated[0]
+    if (image.encoding, image.width, image.height, len(image.data)) != ("rgb8", 12, 8, 288):
+        raise SystemExit("annotated image does not match the published camera image")
+    print(
+        "ROS image reached the active run; its response and annotated image returned to ROS"
+    )
 
 
 if __name__ == "__main__":

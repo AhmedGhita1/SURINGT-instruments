@@ -32,7 +32,7 @@ A robot operator can pull and run a dedicated SURGINT robot image that starts th
 
 - Start one API worker and one bridge process, and stop the container if either process exits.
 - The bridge discovers the current non-terminal robot run, skips images while no run exists, and reconnects after release and restart.
-- Keep the camera and result topics configurable, with `/camera/image_raw` and `/surgint/robot_results` as defaults.
+- Keep the camera, result, and annotated-image topics configurable, with `/camera/image_raw`, `/surgint/robot_results`, and `/surgint/annotated_image` as defaults.
 
 **verification:** Runtime tests cover active-run discovery, no-run behavior, terminal-run behavior, process startup, and clean shutdown.
 
@@ -45,8 +45,9 @@ A robot operator can pull and run a dedicated SURGINT robot image that starts th
 - Support x86-64 Linux with the NVIDIA Container Toolkit and ROS 2 Humble peers.
 - Use host networking and IPC for ROS 2 discovery and local operator access.
 - Publish unchanged frame response JSON as `std_msgs/msg/String` on the configured result topic.
+- While the annotated-image topic has a subscriber, publish each analyzed camera image as `sensor_msgs/msg/Image` (`rgb8`, original header) with every tracked box, label, confidence, and the item's handling outcome drawn on it. The outcome persists on the item's box after its resolution frame.
 
-**verification:** A local GPU smoke test starts the image, creates a run, replays ROS images, observes results, and confirms the operator page is reachable.
+**verification:** A local GPU smoke test starts the image, creates a run, replays ROS images, observes results and an annotated image, and confirms the operator page is reachable.
 
 ## C. shared constraints
 

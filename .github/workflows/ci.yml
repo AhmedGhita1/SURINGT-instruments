@@ -111,6 +111,8 @@ jobs:
           docker exec surgint-robot-ci python -c 'import services, surgint'
           docker exec surgint-robot-ci bash -lc \
             'source /opt/ros/humble/setup.bash && /usr/bin/python3 -c "import rclpy; from sensor_msgs.msg import Image; from std_msgs.msg import String"'
+          docker exec surgint-robot-ci /usr/bin/python3 /app/bridge/ros/surgint_robot_bridge.py --help
+          docker exec surgint-robot-ci test -f /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
 
       - run: bash docker/smoke.sh
       - run: BASE=http://127.0.0.1:8001 bash docker/robot/smoke.sh

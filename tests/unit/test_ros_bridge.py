@@ -11,7 +11,9 @@ from bridge.ros.surgint_robot_bridge import (
     ActiveRobotRunClient,
     FrameBridge,
     FramePostError,
+    HandlingOutcomes,
     SourceTimeSelector,
+    annotate_sensor_image,
     encode_sensor_image,
 )
 
@@ -34,14 +36,42 @@ def encoded_image() -> tuple[bytes, str, str]:
     return b"image", "frame.ppm", "image/x-portable-pixmap"
 
 
-def offer(bridge: FrameBridge, sequence: int, captured_at: float) -> bool:
+def offer(
+    bridge: FrameBridge,
+    sequence: int,
+    captured_at: float,
+    source_image: object = None,
+) -> bool:
     return bridge.offer(
         source_sequence=sequence,
         captured_at=captured_at,
         source_width=1920,
         source_height=1080,
         encode_image=encoded_image,
+        source_image=source_image,
     )
+
+
+def robot_response(run_id: str, detections=(), new_results=()) -> dict:
+    return {
+        "status": {"run_id": run_id},
+        "detections": list(detections),
+        "new_results": list(new_results),
+    }
+
+
+def tracked(track_id: int, box: tuple[float, float, float, float]) -> dict:
+    return {
+        "track_id": track_id,
+        "class_id": 3,
+        "label": "scissors",
+        "score": 0.84,
+        "box": list(box),
+    }
+
+
+def resolved(item_id: int, outcome: str, action: str | None = None) -> dict:
+    return {"item_id": item_id, "handling_outcome": outcome, "action": action}
 
 
 def test_selector_uses_first_24_fps_image_on_each_source_time_grid_point():
@@ -223,3 +253,89 @@ def test_image_encoding_supports_rgb_bgr_and_mono_with_padded_rows(tmp_path):
         ((2, 1), (255, 0, 0)),
         ((2, 1), (0, 0, 0)),
     ]
+
+
+def test_bridge_annotates_the_posted_image_and_reports_annotation_failures():
+    annotated = []
+    errors = []
+    responses = []
+
+    def post_frame(**frame) -> str:
+        return json.dumps({"source_sequence": frame["source_sequence"]})
+
+    def annotate(payload: str, source_image: object) -> None:
+        annotated.append((json.loads(payload)["source_sequence"], source_image))
+        raise RuntimeError("drawing failed")
+
+    bridge = FrameBridge(post_frame, responses.append, errors.append, annotate)
+    assert offer(bridge, 3, 0.0, source_image="camera image")
+    assert bridge.wait_until_idle(1.0)
+
+    assert annotated == [(3, "camera image")]
+    assert len(responses) == 1
+    assert errors == ["annotation failed: drawing failed"]
+    assert bridge.stats.published_responses == 1
+    assert bridge.stats.post_failures == 0
+    bridge.close()
+
+
+def test_handling_outcome_stays_with_its_item_until_the_run_changes():
+    outcomes = HandlingOutcomes()
+
+    outcomes.update(
+        robot_response(
+            "run-a",
+            new_results=[resolved(2, "Recommendation", "transport-to-reprocessing")],
+        )
+    )
+    outcomes.update(robot_response("run-a"))
+    assert outcomes.get(2) == ("Recommendation", "transport-to-reprocessing")
+
+    outcomes.update(robot_response("run-b"))
+    assert outcomes.get(2) is None
+
+
+def test_annotation_colors_boxes_by_handling_outcome_for_each_encoding():
+    width, height = 200, 120
+    response = robot_response(
+        "run-a",
+        detections=[
+            tracked(1, (20, 60, 90, 110)),
+            tracked(2, (110, 60, 180, 110)),
+            tracked(3, (150, 5, 195, 30)),
+        ],
+        new_results=[
+            resolved(1, "Recommendation", "transport-to-reprocessing"),
+            resolved(2, "Needs review"),
+        ],
+    )
+    outcomes = HandlingOutcomes()
+    outcomes.update(response)
+
+    def message(encoding: str, channels: int, marker: bytes) -> SimpleNamespace:
+        step = width * channels + 4
+        data = bytearray(step * height)
+        offset = 5 * step + 5 * channels
+        data[offset : offset + channels] = marker
+        return SimpleNamespace(
+            width=width,
+            height=height,
+            step=step,
+            encoding=encoding,
+            data=bytes(data),
+        )
+
+    cases = [
+        (message("rgb8", 3, bytes((255, 0, 0))), (255, 0, 0)),
+        (message("bgr8", 3, bytes((0, 0, 255))), (255, 0, 0)),
+        (message("mono8", 1, bytes((200,))), (200, 200, 200)),
+    ]
+    for source, marker in cases:
+        pixels = annotate_sensor_image(source, response, outcomes)
+        image = Image.frombytes("RGB", (width, height), pixels)
+
+        assert image.getpixel((5, 5)) == marker
+        assert image.getpixel((55, 110)) == (89, 215, 176)
+        assert image.getpixel((145, 110)) == (255, 198, 109)
+        assert image.getpixel((150, 30)) == (127, 199, 255)
+        assert image.getpixel((55, 85)) == (0, 0, 0)

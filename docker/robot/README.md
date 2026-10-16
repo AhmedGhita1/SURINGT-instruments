@@ -19,6 +19,8 @@ docker run --rm --gpus all \
 
 Open `http://ROBOT_IP:7860/robot`, start a run, and leave the container running. The bridge automatically attaches to that run. Results are also published as `std_msgs/msg/String` on `/surgint/robot_results`.
 
-Set `SURGINT_API_PORT` if port 7860 is occupied. Set `ROS_DOMAIN_ID`, `SURGINT_IMAGE_TOPIC`, and `SURGINT_RESULT_TOPIC` to match the robot.
+While something subscribes to `/surgint/annotated_image`, each analyzed camera image is published there as `sensor_msgs/msg/Image` with every box, label, confidence, and handling outcome drawn on it. View it with `ros2 run rqt_image_view rqt_image_view /surgint/annotated_image` or in rviz2.
+
+Set `SURGINT_API_PORT` if port 7860 is occupied. Set `ROS_DOMAIN_ID`, `SURGINT_IMAGE_TOPIC`, `SURGINT_RESULT_TOPIC`, and `SURGINT_ANNOTATED_TOPIC` to match the robot.
 
 The image contains the pinned model and does not download artifacts at startup. It does not support Jetson or ARM64.

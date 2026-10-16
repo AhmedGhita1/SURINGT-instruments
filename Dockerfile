@@ -44,6 +44,8 @@ RUN apt-get update \
         > /etc/apt/sources.list.d/ros2.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
+        fonts-dejavu-core \
+        python3-pil \
         ros-humble-rclpy \
         ros-humble-rmw-fastrtps-cpp \
         ros-humble-sensor-msgs \
@@ -57,6 +59,7 @@ COPY --chown=surgint:surgint docker/robot/fastrtps-profile.xml /app/docker/robot
 ENV SURGINT_API_PORT=7860 \
     SURGINT_IMAGE_TOPIC=/camera/image_raw \
     SURGINT_RESULT_TOPIC=/surgint/robot_results \
+    SURGINT_ANNOTATED_TOPIC=/surgint/annotated_image \
     FASTRTPS_DEFAULT_PROFILES_FILE=/app/docker/robot/fastrtps-profile.xml \
     FASTDDS_DEFAULT_PROFILES_FILE=/app/docker/robot/fastrtps-profile.xml
 

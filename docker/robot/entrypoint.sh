@@ -9,6 +9,7 @@ api_port=${SURGINT_API_PORT:-7860}
 api_base="http://127.0.0.1:${api_port}"
 image_topic=${SURGINT_IMAGE_TOPIC:-/camera/image_raw}
 result_topic=${SURGINT_RESULT_TOPIC:-/surgint/robot_results}
+annotated_topic=${SURGINT_ANNOTATED_TOPIC:-/surgint/annotated_image}
 api_pid=""
 bridge_pid=""
 
@@ -57,7 +58,8 @@ fi
 /usr/bin/python3 /app/bridge/ros/surgint_robot_bridge.py \
     --api-base "$api_base" \
     --image-topic "$image_topic" \
-    --result-topic "$result_topic" &
+    --result-topic "$result_topic" \
+    --annotated-topic "$annotated_topic" &
 bridge_pid=$!
 
 set +e

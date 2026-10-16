@@ -3,7 +3,9 @@
 import argparse
 import json
 import struct
+from array import array
 from dataclasses import dataclass
+from functools import lru_cache
 from math import floor, isfinite
 from threading import Condition, Lock, Thread
 from typing import Callable
@@ -11,13 +13,25 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import UUID, uuid4
 
+from PIL import Image as PillowImage
+from PIL import ImageDraw, ImageFont
+
 
 ANALYSIS_INTERVAL_SECONDS = 0.2
 GRID_TOLERANCE_SECONDS = 1e-12
 DEFAULT_API_BASE = "http://127.0.0.1:7860"
 DEFAULT_IMAGE_TOPIC = "/camera/image_raw"
 DEFAULT_RESULT_TOPIC = "/surgint/robot_results"
+DEFAULT_ANNOTATED_TOPIC = "/surgint/annotated_image"
 SOURCE_ID = "ros2-camera"
+FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+OUTCOME_COLORS = {
+    "Recommendation": (89, 215, 176),
+    "Needs review": (255, 198, 109),
+}
+NO_OUTCOME_COLOR = (127, 199, 255)
+LABEL_TEXT_COLOR = (0, 0, 0)
+LABEL_PADDING = 3
 
 
 class SourceTimeSelector:
@@ -197,10 +211,12 @@ class FrameBridge:
         post_frame: Callable[..., str],
         publish_response: Callable[[str], None],
         report_error: Callable[[str], None] | None = None,
+        publish_annotation: Callable[[str, object], None] | None = None,
     ) -> None:
         self._post_frame = post_frame
         self._publish_response = publish_response
         self._report_error = report_error or (lambda _message: None)
+        self._publish_annotation = publish_annotation
         self._selector = SourceTimeSelector()
         self._lock = Lock()
         self._idle = Condition(self._lock)
@@ -217,6 +233,7 @@ class FrameBridge:
         source_width: int,
         source_height: int,
         encode_image: Callable[[], tuple[bytes, str, str]],
+        source_image: object = None,
     ) -> bool:
         with self._lock:
             if self._closed:
@@ -250,6 +267,7 @@ class FrameBridge:
                 "image": image,
                 "image_filename": image_filename,
                 "image_content_type": image_content_type,
+                "source_image": source_image,
             },
             name="surgint-robot-frame-post",
             daemon=True,
@@ -259,13 +277,14 @@ class FrameBridge:
         worker.start()
         return True
 
-    def _send(self, **frame) -> None:
+    def _send(self, source_image: object = None, **frame) -> None:
         try:
             payload = self._post_frame(**frame)
             self._publish_response(payload)
             with self._lock:
                 self.stats.posted_images += 1
                 self.stats.published_responses += 1
+            self._annotate(payload, source_image)
         except NoActiveRobotRun:
             with self._lock:
                 self.stats.skipped_no_active_run += 1
@@ -285,6 +304,14 @@ class FrameBridge:
             with self._lock:
                 self._busy = False
                 self._idle.notify_all()
+
+    def _annotate(self, payload: str, source_image: object) -> None:
+        if self._publish_annotation is None or source_image is None:
+            return
+        try:
+            self._publish_annotation(payload, source_image)
+        except Exception as error:
+            self._report_error(f"annotation failed: {error}")
 
     def wait_until_idle(self, timeout: float | None = None) -> bool:
         with self._idle:
@@ -355,6 +382,93 @@ def encode_sensor_image(message) -> tuple[bytes, str, str]:
     raise ValueError(f"unsupported sensor_msgs/Image encoding: {message.encoding}")
 
 
+class HandlingOutcomes:
+    """Handling outcome of every resolved item in the current robot run."""
+
+    def __init__(self) -> None:
+        self._run_id: str | None = None
+        self._outcomes: dict[int, tuple[str, str | None]] = {}
+
+    def update(self, response: dict) -> None:
+        run_id = response["status"]["run_id"]
+        if run_id != self._run_id:
+            self._run_id = run_id
+            self._outcomes = {}
+        for result in response["new_results"]:
+            self._outcomes[result["item_id"]] = (
+                result["handling_outcome"],
+                result["action"],
+            )
+
+    def get(self, item_id: int) -> tuple[str, str | None] | None:
+        return self._outcomes.get(item_id)
+
+
+@lru_cache(maxsize=4)
+def _label_font(size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+    try:
+        return ImageFont.truetype(FONT_PATH, size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def _rgb_image(message) -> PillowImage.Image:
+    width = int(message.width)
+    height = int(message.height)
+    step = int(message.step)
+    if width <= 0 or height <= 0:
+        raise ValueError("image dimensions must be positive")
+    modes = {"rgb8": ("RGB", "RGB"), "bgr8": ("RGB", "BGR"), "mono8": ("L", "L")}
+    if message.encoding not in modes:
+        raise ValueError(f"unsupported sensor_msgs/Image encoding: {message.encoding}")
+    mode, raw_mode = modes[message.encoding]
+    data = bytes(message.data)
+    if len(data) < step * height:
+        raise ValueError("image data is shorter than its declared dimensions")
+    image = PillowImage.frombytes(mode, (width, height), data, "raw", raw_mode, step)
+    return image.convert("RGB")
+
+
+def annotate_sensor_image(message, response: dict, outcomes: HandlingOutcomes) -> bytes:
+    """Draw each tracked box with its label, confidence, and handling outcome as rgb8."""
+    image = _rgb_image(message)
+    draw = ImageDraw.Draw(image)
+    font = _label_font(max(12, image.height // 40))
+    line_width = max(2, image.height // 360)
+    for detection in response["detections"]:
+        # A robot item ID is the track ID that resolved the item.
+        outcome = outcomes.get(detection["track_id"])
+        if outcome is None:
+            color, status = NO_OUTCOME_COLOR, "no outcome"
+        else:
+            handling_outcome, action = outcome
+            color = OUTCOME_COLORS[handling_outcome]
+            status = action if handling_outcome == "Recommendation" else handling_outcome
+        x1, y1, x2, y2 = detection["box"]
+        draw.rectangle((x1, y1, x2, y2), outline=color, width=line_width)
+
+        text = (
+            f"#{detection['track_id']} {detection['label']} {detection['score']:.2f}\n"
+            f"{status}"
+        )
+        left, top, right, bottom = draw.multiline_textbbox((0, 0), text, font=font)
+        label_width = right - left + 2 * LABEL_PADDING
+        label_height = bottom - top + 2 * LABEL_PADDING
+        label_x = min(max(x1, 0), max(image.width - label_width, 0))
+        label_y = y1 - label_height if y1 >= label_height else max(y1, 0)
+        draw.rectangle(
+            (label_x, label_y, label_x + label_width, label_y + label_height),
+            fill=color,
+        )
+        draw.multiline_text(
+            (label_x + LABEL_PADDING - left, label_y + LABEL_PADDING - top),
+            text,
+            fill=LABEL_TEXT_COLOR,
+            font=font,
+        )
+    return image.tobytes()
+
+
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -365,6 +479,7 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
     parser.add_argument("--api-base", default=DEFAULT_API_BASE)
     parser.add_argument("--image-topic", default=DEFAULT_IMAGE_TOPIC)
     parser.add_argument("--result-topic", default=DEFAULT_RESULT_TOPIC)
+    parser.add_argument("--annotated-topic", default=DEFAULT_ANNOTATED_TOPIC)
     return parser.parse_known_args(argv)
 
 
@@ -384,6 +499,12 @@ def main(argv: list[str] | None = None) -> None:
         def __init__(self) -> None:
             super().__init__("surgint_robot_image_bridge")
             self._result_publisher = self.create_publisher(String, args.result_topic, 10)
+            self._annotated_publisher = self.create_publisher(
+                Image,
+                args.annotated_topic,
+                2,
+            )
+            self._outcomes = HandlingOutcomes()
             if args.run_id is None:
                 client = ActiveRobotRunClient(args.api_base)
                 run_target = "the current active run"
@@ -394,6 +515,7 @@ def main(argv: list[str] | None = None) -> None:
                 client.post_frame,
                 self._publish_response,
                 self.get_logger().error,
+                self._publish_annotation,
             )
             self._source_sequence = 0
             self._subscription = self.create_subscription(
@@ -404,7 +526,8 @@ def main(argv: list[str] | None = None) -> None:
             )
             self.get_logger().info(
                 f"bridging {args.image_topic} to {run_target}; "
-                f"publishing responses on {args.result_topic}"
+                f"publishing responses on {args.result_topic} "
+                f"and annotated images on {args.annotated_topic}"
             )
 
         def _on_image(self, message: Image) -> None:
@@ -417,10 +540,28 @@ def main(argv: list[str] | None = None) -> None:
                 source_width=message.width,
                 source_height=message.height,
                 encode_image=lambda: encode_sensor_image(message),
+                source_image=message,
             )
 
         def _publish_response(self, payload: str) -> None:
             self._result_publisher.publish(String(data=payload))
+
+        def _publish_annotation(self, payload: str, message: Image) -> None:
+            response = json.loads(payload)
+            self._outcomes.update(response)
+            if self._annotated_publisher.get_subscription_count() == 0:
+                return
+            annotated = Image()
+            annotated.header = message.header
+            annotated.height = message.height
+            annotated.width = message.width
+            annotated.encoding = "rgb8"
+            annotated.step = message.width * 3
+            annotated.data = array(
+                "B",
+                annotate_sensor_image(message, response, self._outcomes),
+            )
+            self._annotated_publisher.publish(annotated)
 
         def destroy_node(self) -> bool:
             self._bridge.close()
